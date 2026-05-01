@@ -88,14 +88,56 @@ export default function Home() {
 
   /* ---- Handlers ---- */
 
-  const handleImageSelect = useCallback((file: File) => {
-    setError(null)
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      setImagePreview(e.target?.result as string)
-    }
-    reader.readAsDataURL(file)
+  const compressImage = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      const img = new Image()
+
+      img.onload = () => {
+        // Max dimensions for API payload
+        const MAX_WIDTH = 1600
+        const MAX_HEIGHT = 1600
+        let { width, height } = img
+
+        if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+          const ratio = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height)
+          width = Math.round(width * ratio)
+          height = Math.round(height * ratio)
+        }
+
+        canvas.width = width
+        canvas.height = height
+
+        ctx?.drawImage(img, 0, 0, width, height)
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        URL.revokeObjectURL(img.src)
+        resolve(dataUrl)
+      }
+
+      img.onerror = () => {
+        URL.revokeObjectURL(img.src)
+        reject(new Error('Failed to load image'))
+      }
+
+      img.src = URL.createObjectURL(file)
+    })
   }, [])
+
+  const handleImageSelect = useCallback(async (file: File) => {
+    setError(null)
+    try {
+      const compressed = await compressImage(file)
+      setImagePreview(compressed)
+    } catch {
+      // Fallback to direct data URL if compression fails
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        setImagePreview(e.target?.result as string)
+      }
+      reader.readAsDataURL(file)
+    }
+  }, [compressImage])
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -119,20 +161,44 @@ export default function Home() {
     setAnalyzing(true)
     setError(null)
     try {
+      const controller = new AbortController()
+      // 2 minute timeout for AI analysis
+      const timeoutId = setTimeout(() => controller.abort(), 120000)
+
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: imagePreview }),
+        signal: controller.signal,
       })
+      clearTimeout(timeoutId)
+
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}))
-        throw new Error(errData.error || 'Analysis failed. Please try again.')
+        let errorMessage = 'Analysis failed. Please try again.'
+        try {
+          const errData = await res.json()
+          errorMessage = errData.error || errorMessage
+        } catch {
+          // Use default error message
+        }
+        throw new Error(errorMessage)
       }
+
       const data: AnalysisResult = await res.json()
+
+      // Validate the response has expected structure
+      if (!data.ingredients || !Array.isArray(data.ingredients) || data.ingredients.length === 0) {
+        throw new Error('Analysis returned no ingredients. Please try a clearer photo.')
+      }
+
       setResult(data)
       setScreen('results')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setError('Analysis timed out. Please try again.')
+      } else {
+        setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      }
     } finally {
       setAnalyzing(false)
     }

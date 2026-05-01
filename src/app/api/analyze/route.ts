@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
 import { db } from '@/lib/db'
 
+// Allow larger body sizes for image uploads (base64 encoded images can be large)
+export const maxDuration = 120 // 2 minutes timeout for AI processing
+
 const SYSTEM_PROMPT = `You are Vitality Logic, an educational nutritional awareness tool. You help users understand food ingredients for informational purposes only. You are NOT a medical device, doctor, dietitian, or regulatory authority. All output is educational and should not be used as medical or dietary advice.
 
 LEGAL DISCLAIMER (embed in every response context):
@@ -86,7 +89,7 @@ ABSOLUTE RULES:
 7. "Flagged" means "worth being aware of based on available research" — never "dangerous", "toxic", or "harmful".
 8. Always remind users to consult a healthcare professional in the advice field.
 
-You MUST respond ONLY with this exact JSON structure and nothing else:
+You MUST respond ONLY with this exact JSON structure and nothing else. Do NOT wrap the JSON in markdown code blocks. Return raw JSON only:
 
 {
   "product_name": "Inferred product name or 'Unknown Product'",
@@ -108,6 +111,61 @@ You MUST respond ONLY with this exact JSON structure and nothing else:
   ]
 }`
 
+function extractJSON(text: string): string | null {
+  // First, try to parse the entire text as JSON
+  try {
+    JSON.parse(text)
+    return text
+  } catch {
+    // Continue to other methods
+  }
+
+  // Try to extract from markdown code blocks
+  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+  if (codeBlockMatch) {
+    try {
+      JSON.parse(codeBlockMatch[1])
+      return codeBlockMatch[1]
+    } catch {
+      // Continue
+    }
+  }
+
+  // Try to find the outermost JSON object
+  let depth = 0
+  let start = -1
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (depth === 0) start = i
+      depth++
+    } else if (text[i] === '}') {
+      depth--
+      if (depth === 0 && start !== -1) {
+        const candidate = text.substring(start, i + 1)
+        try {
+          JSON.parse(candidate)
+          return candidate
+        } catch {
+          // Continue looking
+        }
+      }
+    }
+  }
+
+  // Last resort: regex match
+  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  if (jsonMatch) {
+    try {
+      JSON.parse(jsonMatch[0])
+      return jsonMatch[0]
+    } catch {
+      // Give up
+    }
+  }
+
+  return null
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -117,65 +175,112 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No image provided' }, { status: 400 })
     }
 
+    // Validate image data format
+    if (!image.startsWith('data:image/') && !image.startsWith('http')) {
+      return NextResponse.json({ error: 'Invalid image format. Please upload a valid image.' }, { status: 400 })
+    }
+
     // Initialize the SDK
     const zai = await ZAI.create()
 
     // Step 1: Use VLM to extract ingredients from the image
-    const visionResponse = await zai.chat.completions.createVision({
-      model: 'glm-4.6v',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'You are an expert OCR system specialized in reading food product ingredient labels. Extract ALL visible ingredients from this food product label image. Also identify the product name if visible. List every ingredient exactly as written on the label. If the image is not a food ingredient label or is unreadable, say so. Format your response as a structured list with the product name at the top followed by each ingredient on a new line.'
-            },
-            {
-              type: 'image_url',
-              image_url: { url: image }
-            }
-          ]
-        }
-      ],
-      thinking: { type: 'disabled' }
-    })
+    let visionResponse
+    try {
+      visionResponse = await zai.chat.completions.createVision({
+        model: 'glm-4.6v',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'You are an expert OCR system specialized in reading food product ingredient labels. Extract ALL visible ingredients from this food product label image. Also identify the product name if visible. List every ingredient exactly as written on the label. If the image is not a food ingredient label or is unreadable, say so. Format your response as a structured list with the product name at the top followed by each ingredient on a new line.'
+              },
+              {
+                type: 'image_url',
+                image_url: { url: image }
+              }
+            ]
+          }
+        ],
+        thinking: { type: 'disabled' }
+      })
+    } catch (vlmError) {
+      console.error('VLM API error:', vlmError)
+      return NextResponse.json(
+        { error: 'Could not analyze the image. Please try again with a clearer photo.' },
+        { status: 500 }
+      )
+    }
 
     const extractedText = visionResponse.choices?.[0]?.message?.content || ''
 
     if (!extractedText.trim()) {
-      return NextResponse.json({ error: 'Could not extract text from the image. Please try a clearer photo.' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Could not extract text from the image. Please try a clearer photo of the ingredient label.' },
+        { status: 400 }
+      )
+    }
+
+    // Check if the image was identified as not a food label
+    const lowerText = extractedText.toLowerCase()
+    if (lowerText.includes('not a food') || lowerText.includes('not an ingredient') || lowerText.includes('unreadable')) {
+      return NextResponse.json(
+        { error: 'The image does not appear to be a food ingredient label. Please upload a clear photo of a food product ingredient list.' },
+        { status: 400 }
+      )
     }
 
     // Step 2: Use LLM to classify ingredients and generate analysis
-    const classificationResponse = await zai.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: SYSTEM_PROMPT
-        },
-        {
-          role: 'user',
-          content: `Analyze the following food product ingredient label that was extracted from an image. Classify each ingredient and provide the complete analysis as specified:\n\n${extractedText}`
-        }
-      ],
-      thinking: { type: 'disabled' }
-    })
+    let classificationResponse
+    try {
+      classificationResponse = await zai.chat.completions.create({
+        messages: [
+          {
+            role: 'system',
+            content: SYSTEM_PROMPT
+          },
+          {
+            role: 'user',
+            content: `Analyze the following food product ingredient label that was extracted from an image. Classify each ingredient and provide the complete analysis as specified. Return ONLY raw JSON, no markdown code blocks:\n\n${extractedText}`
+          }
+        ],
+        thinking: { type: 'disabled' }
+      })
+    } catch (llmError) {
+      console.error('LLM API error:', llmError)
+      return NextResponse.json(
+        { error: 'Analysis service is temporarily unavailable. Please try again.' },
+        { status: 500 }
+      )
+    }
 
     const analysisText = classificationResponse.choices?.[0]?.message?.content || ''
 
-    // Parse the JSON response from the LLM
+    if (!analysisText.trim()) {
+      return NextResponse.json(
+        { error: 'Analysis produced no results. Please try again.' },
+        { status: 500 }
+      )
+    }
+
+    // Parse the JSON response from the LLM with robust extraction
     let analysisResult
+    const jsonStr = extractJSON(analysisText)
+    if (!jsonStr) {
+      console.error('Failed to extract JSON from LLM response')
+      console.error('Raw response (first 500 chars):', analysisText.substring(0, 500))
+      return NextResponse.json(
+        { error: 'Failed to generate analysis. Please try again.' },
+        { status: 500 }
+      )
+    }
+
     try {
-      // Try to extract JSON from the response (it might have markdown code blocks)
-      const jsonMatch = analysisText.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) {
-        throw new Error('No JSON found in response')
-      }
-      analysisResult = JSON.parse(jsonMatch[0])
+      analysisResult = JSON.parse(jsonStr)
     } catch (parseError) {
-      console.error('Failed to parse LLM response as JSON:', parseError)
-      console.error('Raw response:', analysisText)
+      console.error('Failed to parse extracted JSON:', parseError)
+      console.error('Extracted JSON (first 500 chars):', jsonStr.substring(0, 500))
       return NextResponse.json(
         { error: 'Failed to generate analysis. Please try again.' },
         { status: 500 }
@@ -184,6 +289,7 @@ export async function POST(req: NextRequest) {
 
     // Validate the response structure
     if (!analysisResult.ingredients || !Array.isArray(analysisResult.ingredients)) {
+      console.error('Invalid response structure - missing ingredients array')
       return NextResponse.json(
         { error: 'Invalid analysis result. Please try again.' },
         { status: 500 }
@@ -217,11 +323,16 @@ export async function POST(req: NextRequest) {
       analysisResult.grade = 'C'
     }
 
-    // Save to database (async, don't block response)
+    // Ensure product_name exists
+    if (!analysisResult.product_name) {
+      analysisResult.product_name = 'Unknown Product'
+    }
+
+    // Save to database (non-blocking)
     try {
       await db.scan.create({
         data: {
-          productName: analysisResult.product_name || 'Unknown Product',
+          productName: analysisResult.product_name,
           grade: analysisResult.grade,
           gradeReason: analysisResult.grade_reason || '',
           summary: analysisResult.vitality_summary || '',
@@ -240,8 +351,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(analysisResult)
   } catch (error) {
     console.error('Analysis error:', error)
+    const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: 'An error occurred during analysis. Please try again.' },
+      { error: `An error occurred during analysis: ${message}. Please try again.` },
       { status: 500 }
     )
   }

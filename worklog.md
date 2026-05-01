@@ -75,3 +75,28 @@ Stage Summary:
 - App fully functional with all 3 screens
 - Dev server running on port 3000
 - No compilation or runtime errors
+
+---
+Task ID: 7
+Agent: Main
+Task: Fix API analysis errors
+
+Work Log:
+- Found root cause: ZAI import was accidentally removed when rewriting the route file
+- Fixed missing import: added `import ZAI from 'z-ai-web-dev-sdk'` and `import { db } from '@/lib/db'`
+- Added robust JSON extraction with `extractJSON()` function (handles markdown code blocks, nested objects)
+- Added separate try/catch for VLM and LLM API calls with specific error messages
+- Added image format validation
+- Added non-food-label detection
+- Added client-side image compression (resize to max 1600x1600, JPEG 85% quality)
+- Added AbortController with 2-minute timeout on frontend
+- Added response validation on frontend (check ingredients array exists and is non-empty)
+- Fixed route segment config (removed invalid Pages Router `api.bodyParser`, added `maxDuration = 120`)
+- Verified full end-to-end flow works with real uploaded image (masala noodle label)
+
+Stage Summary:
+- API now works reliably: 200 status with proper analysis results
+- ~45s processing time (VLM + LLM pipeline)
+- Better error messages for users
+- Image compression reduces payload size
+- Robust JSON parsing handles LLM response variations
