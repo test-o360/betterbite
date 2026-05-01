@@ -77,7 +77,7 @@ function extractJSON(text: string): string | null {
 
 async function analyzeWithRetry(
   zai: ZAI,
-  options: { image?: string; ingredients?: string; productName?: string },
+  options: { image?: string; ingredients?: string },
   maxRetries = 2
 ): Promise<Record<string, unknown>> {
   let lastError: Error | null = null
@@ -121,8 +121,7 @@ async function analyzeWithRetry(
         }
       } else if (options.ingredients) {
         // Manual text input mode
-        const productLabel = options.productName ? `Product: ${options.productName}\n` : ''
-        ingredientText = `${productLabel}Ingredients: ${options.ingredients}`
+        ingredientText = `Ingredients: ${options.ingredients}`
       } else {
         throw new Error('No image or ingredients provided')
       }
@@ -184,7 +183,7 @@ async function analyzeWithRetry(
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { image, ingredients, productName } = body as { image?: string; ingredients?: string; productName?: string }
+    const { image, ingredients } = body as { image?: string; ingredients?: string }
 
     // Validate: must have either image or ingredients text
     if (!image && !ingredients?.trim()) {
@@ -205,7 +204,6 @@ export async function POST(req: NextRequest) {
       analysisResult = await analyzeWithRetry(zai, {
         image: image || undefined,
         ingredients: ingredients?.trim() || undefined,
-        productName: productName?.trim() || undefined,
       }, 2)
     } catch (analysisError) {
       const errMsg = analysisError instanceof Error ? analysisError.message : 'Unknown error'
@@ -245,7 +243,7 @@ export async function POST(req: NextRequest) {
       ? String(analysisResult.grade)
       : 'C'
 
-    const product_name = String(analysisResult.product_name || productName || 'Unknown Product')
+    const product_name = String(analysisResult.product_name || 'Unknown Product')
     const grade_reason = String(analysisResult.grade_reason || '')
     const vitality_summary = String(analysisResult.vitality_summary || '')
     const advice = String(analysisResult.advice || '')

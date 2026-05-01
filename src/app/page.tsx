@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
+import { useTheme } from 'next-themes'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Upload,
@@ -23,16 +24,16 @@ import {
   ShieldAlert,
   ScanLine,
   Type,
-  Plus,
   Pill,
-  Apple,
   Flame,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import Image from 'next/image'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -67,17 +68,29 @@ type InputMode = 'scan' | 'type'
 /* ------------------------------------------------------------------ */
 
 const GRADE_CONFIG: Record<string, { color: string; bg: string; ring: string; label: string }> = {
-  A: { color: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'stroke-emerald-500', label: 'Excellent' },
-  B: { color: 'text-green-600', bg: 'bg-green-50', ring: 'stroke-green-500', label: 'Good' },
-  C: { color: 'text-amber-600', bg: 'bg-amber-50', ring: 'stroke-amber-500', label: 'Moderate' },
-  D: { color: 'text-orange-600', bg: 'bg-orange-50', ring: 'stroke-orange-500', label: 'Low' },
-  F: { color: 'text-red-600', bg: 'bg-red-50', ring: 'stroke-red-500', label: 'Poor' },
+  A: { color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-950/50', ring: 'stroke-emerald-500', label: 'Excellent' },
+  B: { color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-950/50', ring: 'stroke-green-500', label: 'Good' },
+  C: { color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/50', ring: 'stroke-amber-500', label: 'Moderate' },
+  D: { color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-950/50', ring: 'stroke-orange-500', label: 'Low' },
+  F: { color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-950/50', ring: 'stroke-red-500', label: 'Poor' },
 }
 
 const CLASSIFICATION_CONFIG: Record<string, { color: string; bg: string; icon: typeof CheckCircle2; label: string }> = {
-  clean: { color: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', icon: CheckCircle2, label: 'Clean' },
-  processed: { color: 'text-amber-700', bg: 'bg-amber-50 border-amber-200', icon: CircleDot, label: 'Processed' },
-  flagged: { color: 'text-red-700', bg: 'bg-red-50 border-red-200', icon: AlertTriangle, label: 'Flagged' },
+  clean: {
+    color: 'text-emerald-700 dark:text-emerald-400',
+    bg: 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:border-emerald-800',
+    icon: CheckCircle2, label: 'Clean'
+  },
+  processed: {
+    color: 'text-amber-700 dark:text-amber-400',
+    bg: 'bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:border-amber-800',
+    icon: CircleDot, label: 'Processed'
+  },
+  flagged: {
+    color: 'text-red-700 dark:text-red-400',
+    bg: 'bg-red-50 border-red-200 dark:bg-red-950/40 dark:border-red-800',
+    icon: AlertTriangle, label: 'Flagged'
+  },
 }
 
 /* ------------------------------------------------------------------ */
@@ -85,18 +98,24 @@ const CLASSIFICATION_CONFIG: Record<string, { color: string; bg: string; icon: t
 /* ------------------------------------------------------------------ */
 
 export default function Home() {
+  const { theme, setTheme } = useTheme()
   const [screen, setScreen] = useState<Screen>('scan')
   const [inputMode, setInputMode] = useState<InputMode>('scan')
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [manualIngredients, setManualIngredients] = useState('')
-  const [productName, setProductName] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null)
   const [filterTab, setFilterTab] = useState<FilterTab>('all')
   const [error, setError] = useState<string | null>(null)
   const [analyzeProgress, setAnalyzeProgress] = useState('')
+  const [mounted, setMounted] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Avoid hydration mismatch for theme toggle
+  useState(() => {
+    setMounted(true)
+  })
 
   /* ---- Handlers ---- */
 
@@ -166,7 +185,6 @@ export default function Home() {
   )
 
   const handleAnalyze = useCallback(async () => {
-    // Validate based on input mode
     if (inputMode === 'scan' && !imagePreview) return
     if (inputMode === 'type' && !manualIngredients.trim()) return
 
@@ -194,9 +212,6 @@ export default function Home() {
         requestBody.image = imagePreview!
       } else {
         requestBody.ingredients = manualIngredients.trim()
-        if (productName.trim()) {
-          requestBody.productName = productName.trim()
-        }
       }
 
       const res = await fetch('/api/analyze', {
@@ -237,7 +252,7 @@ export default function Home() {
       setAnalyzeProgress('')
       setAnalyzing(false)
     }
-  }, [imagePreview, inputMode, manualIngredients, productName])
+  }, [imagePreview, inputMode, manualIngredients])
 
   const handleIngredientClick = useCallback((ingredient: Ingredient) => {
     setSelectedIngredient(ingredient)
@@ -252,7 +267,6 @@ export default function Home() {
     setFilterTab('all')
     setError(null)
     setManualIngredients('')
-    setProductName('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
@@ -289,20 +303,38 @@ export default function Home() {
               </Button>
             )}
             <div className="flex items-center gap-2.5">
-              <div className="size-9 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-md shadow-emerald-500/20">
-                <Apple className="size-5 text-white" />
-              </div>
+              <Image
+                src="/logo.png"
+                alt="BetterBite"
+                width={36}
+                height={36}
+                className="rounded-lg"
+                priority
+              />
               <div>
                 <span className="font-bold text-lg tracking-tight leading-none">BetterBite</span>
-                <span className="block text-[10px] text-muted-foreground font-medium tracking-wide">KNOW WHAT YOU EAT</span>
+                <span className="block text-[10px] text-muted-foreground font-medium tracking-wide">SCAN • KNOW • CHOOSE BETTER</span>
               </div>
             </div>
           </div>
-          {screen !== 'scan' && (
-            <Button variant="ghost" size="icon" onClick={handleRescan} className="size-9">
-              <RotateCcw className="size-4" />
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {/* Theme Toggle */}
+            {mounted && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-9"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              >
+                {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+              </Button>
+            )}
+            {screen !== 'scan' && (
+              <Button variant="ghost" size="icon" onClick={handleRescan} className="size-9">
+                <RotateCcw className="size-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -315,7 +347,6 @@ export default function Home() {
               inputMode={inputMode}
               imagePreview={imagePreview}
               manualIngredients={manualIngredients}
-              productName={productName}
               analyzing={analyzing}
               analyzeProgress={analyzeProgress}
               error={error}
@@ -323,7 +354,6 @@ export default function Home() {
               fileInputRef={fileInputRef}
               onInputModeChange={setInputMode}
               onManualIngredientsChange={setManualIngredients}
-              onProductNameChange={setProductName}
               onFileChange={handleFileChange}
               onDrop={handleDrop}
               onAnalyze={handleAnalyze}
@@ -373,7 +403,6 @@ function ScanScreen({
   inputMode,
   imagePreview,
   manualIngredients,
-  productName,
   analyzing,
   analyzeProgress,
   error,
@@ -381,7 +410,6 @@ function ScanScreen({
   fileInputRef,
   onInputModeChange,
   onManualIngredientsChange,
-  onProductNameChange,
   onFileChange,
   onDrop,
   onAnalyze,
@@ -390,7 +418,6 @@ function ScanScreen({
   inputMode: InputMode
   imagePreview: string | null
   manualIngredients: string
-  productName: string
   analyzing: boolean
   analyzeProgress: string
   error: string | null
@@ -398,7 +425,6 @@ function ScanScreen({
   fileInputRef: React.RefObject<HTMLInputElement | null>
   onInputModeChange: (mode: InputMode) => void
   onManualIngredientsChange: (val: string) => void
-  onProductNameChange: (val: string) => void
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onDrop: (e: React.DragEvent) => void
   onAnalyze: () => void
@@ -415,7 +441,7 @@ function ScanScreen({
       className="flex flex-col gap-5"
     >
       {/* Hero Section */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 via-green-500 to-teal-600 p-6 text-white shadow-xl shadow-emerald-500/20">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 via-green-500 to-teal-600 p-6 text-white shadow-xl shadow-emerald-500/20 dark:shadow-emerald-500/10">
         <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
         <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2" />
         <div className="relative z-10">
@@ -544,19 +570,6 @@ function ScanScreen({
           transition={{ duration: 0.2 }}
           className="flex flex-col gap-3"
         >
-          {/* Product Name */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Product Name (optional)
-            </label>
-            <Input
-              placeholder="e.g. Kellogg's Corn Flakes"
-              value={productName}
-              onChange={(e) => onProductNameChange(e.target.value)}
-              className="rounded-xl h-11"
-            />
-          </div>
-
           {/* Ingredients List */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -566,7 +579,7 @@ function ScanScreen({
               placeholder={"Type or paste the ingredient list here...\n\ne.g. Corn, Sugar, Malt Flavoring, High Fructose Corn Syrup, Salt..." }
               value={manualIngredients}
               onChange={(e) => onManualIngredientsChange(e.target.value)}
-              className="rounded-xl min-h-[160px] resize-none text-sm leading-relaxed"
+              className="rounded-xl min-h-[180px] resize-none text-sm leading-relaxed"
             />
             <div className="flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
@@ -609,7 +622,7 @@ function ScanScreen({
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700 flex items-start gap-2"
+          className="rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-4 text-sm text-red-700 dark:text-red-400 flex items-start gap-2"
         >
           <AlertTriangle className="size-4 mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -620,7 +633,7 @@ function ScanScreen({
       {canAnalyze && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Button
-            className="w-full h-12 text-base gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 shadow-lg shadow-emerald-500/20 border-0"
+            className="w-full h-12 text-base gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 shadow-lg shadow-emerald-500/20 dark:shadow-emerald-500/10 border-0 text-white"
             onClick={onAnalyze}
             disabled={analyzing}
           >
@@ -660,10 +673,10 @@ function ScanScreen({
       </div>
 
       {/* Disclaimer */}
-      <Card className="bg-amber-50/50 border-amber-200/50">
+      <Card className="bg-amber-50/50 dark:bg-amber-950/20 border-amber-200/50 dark:border-amber-800/30">
         <CardContent className="p-3 flex gap-2.5">
-          <Info className="size-4 text-amber-600 shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-700/80 leading-relaxed">
+          <Info className="size-4 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-700/80 dark:text-amber-400/80 leading-relaxed">
             BetterBite is for educational purposes only. Results are not medical advice. Always consult a healthcare professional.
           </p>
         </CardContent>
@@ -754,15 +767,15 @@ function ResultsScreen({
               {/* Classification Counts */}
               <div className="flex gap-3 pt-1">
                 <div className="flex items-center gap-1">
-                  <CheckCircle2 className="size-3.5 text-emerald-600" />
+                  <CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400" />
                   <span className="text-xs font-medium">{result.clean_count}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <CircleDot className="size-3.5 text-amber-600" />
+                  <CircleDot className="size-3.5 text-amber-600 dark:text-amber-400" />
                   <span className="text-xs font-medium">{result.processed_count}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <AlertTriangle className="size-3.5 text-red-600" />
+                  <AlertTriangle className="size-3.5 text-red-600 dark:text-red-400" />
                   <span className="text-xs font-medium">{result.flagged_count}</span>
                 </div>
               </div>
@@ -772,9 +785,9 @@ function ResultsScreen({
       </Card>
 
       {/* Vitality Summary */}
-      <Card className="bg-gradient-to-r from-emerald-50/80 to-green-50/80 border-emerald-200/50">
+      <Card className="bg-gradient-to-r from-emerald-50/80 to-green-50/80 dark:from-emerald-950/30 dark:to-green-950/30 border-emerald-200/50 dark:border-emerald-800/30">
         <CardContent className="p-4 flex gap-3">
-          <Lightbulb className="size-5 text-emerald-600 shrink-0 mt-0.5" />
+          <Lightbulb className="size-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
           <p className="text-sm leading-relaxed">{result.vitality_summary}</p>
         </CardContent>
       </Card>
@@ -793,9 +806,9 @@ function ResultsScreen({
                 flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-medium
                 transition-all whitespace-nowrap border
                 ${isActive
-                  ? tab === 'clean' ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                    : tab === 'processed' ? 'bg-amber-50 border-amber-200 text-amber-700'
-                    : tab === 'flagged' ? 'bg-red-50 border-red-200 text-red-700'
+                  ? tab === 'clean' ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400'
+                    : tab === 'processed' ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400'
+                    : tab === 'flagged' ? 'bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
                     : 'bg-primary/10 border-primary/20 text-primary'
                   : 'bg-background border-border text-muted-foreground hover:bg-muted'
                 }
@@ -848,9 +861,9 @@ function ResultsScreen({
       </div>
 
       {/* Advice */}
-      <Card className="bg-amber-50/50 border-amber-200/50">
+      <Card className="bg-amber-50/50 dark:bg-amber-950/20 border-amber-200/50 dark:border-amber-800/30">
         <CardContent className="p-4 flex gap-3">
-          <ShieldAlert className="size-5 text-amber-600 shrink-0 mt-0.5" />
+          <ShieldAlert className="size-5 text-amber-600 dark:text-amber-500 shrink-0 mt-0.5" />
           <p className="text-sm leading-relaxed">{result.advice}</p>
         </CardContent>
       </Card>
@@ -891,9 +904,9 @@ function DetailScreen({
     .slice(0, 5)
 
   const impactSections = [
-    { key: 'body' as const, icon: Activity, label: 'Body', color: 'text-blue-600', bg: 'bg-blue-50', borderColor: 'border-blue-200' },
-    { key: 'health' as const, icon: Heart, label: 'Health', color: 'text-rose-600', bg: 'bg-rose-50', borderColor: 'border-rose-200' },
-    { key: 'mind' as const, icon: Brain, label: 'Mind', color: 'text-violet-600', bg: 'bg-violet-50', borderColor: 'border-violet-200' },
+    { key: 'body' as const, icon: Activity, label: 'Body', color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-950/30', borderColor: 'border-blue-200 dark:border-blue-800' },
+    { key: 'health' as const, icon: Heart, label: 'Health', color: 'text-rose-600 dark:text-rose-400', bg: 'bg-rose-50 dark:bg-rose-950/30', borderColor: 'border-rose-200 dark:border-rose-800' },
+    { key: 'mind' as const, icon: Brain, label: 'Mind', color: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-950/30', borderColor: 'border-violet-200 dark:border-violet-800' },
   ]
 
   return (
@@ -923,7 +936,7 @@ function DetailScreen({
         </CardContent>
       </Card>
 
-      {/* What It Is - Body/Health/Mind Sections */}
+      {/* Health Impact Report */}
       <div className="space-y-3">
         <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1">
           Health Impact Report
@@ -933,7 +946,7 @@ function DetailScreen({
           return (
             <Card key={section.key} className={`${section.bg} ${section.borderColor} border`}>
               <CardContent className="p-4 flex gap-3">
-                <div className="size-9 rounded-lg bg-white/80 flex items-center justify-center shrink-0">
+                <div className="size-9 rounded-lg bg-white/80 dark:bg-background/80 flex items-center justify-center shrink-0">
                   <Icon className={`size-4 ${section.color}`} />
                 </div>
                 <div className="flex-1 space-y-1">
@@ -949,9 +962,9 @@ function DetailScreen({
       </div>
 
       {/* Consumer Tip */}
-      <Card className="bg-gradient-to-r from-emerald-50/80 to-green-50/80 border-emerald-200/50">
+      <Card className="bg-gradient-to-r from-emerald-50/80 to-green-50/80 dark:from-emerald-950/30 dark:to-green-950/30 border-emerald-200/50 dark:border-emerald-800/30">
         <CardContent className="p-4 flex gap-3">
-          <Lightbulb className="size-5 text-emerald-600 shrink-0 mt-0.5" />
+          <Lightbulb className="size-5 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="text-sm font-medium">Educational Note</p>
             <p className="text-xs text-muted-foreground leading-relaxed">
