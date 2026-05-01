@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
-import { db } from '@/lib/db'
+import { dbWrite } from '@/lib/db'
 
 export const maxDuration = 120 // 2 minutes timeout for AI processing
 
@@ -266,26 +266,21 @@ export async function POST(req: NextRequest) {
     const vitality_summary = String(analysisResult.vitality_summary || '')
     const advice = String(analysisResult.advice || '')
 
-    // Save to database (non-blocking, graceful on Vercel)
-    try {
-      await db.scan.create({
-        data: {
-          productName: product_name,
-          grade,
-          gradeReason: grade_reason,
-          summary: vitality_summary,
-          advice,
-          cleanCount: clean_count,
-          processedCount: processed_count,
-          flaggedCount: flagged_count,
-          source: image ? 'scan' : 'manual',
-          results: JSON.stringify(normalizedIngredients),
-        }
-      })
-    } catch (dbError) {
-      // DB save is optional — don't fail the request
-      console.error('DB save skipped:', dbError instanceof Error ? dbError.message : 'DB unavailable')
-    }
+    // Save to database (graceful — won't crash on Vercel/serverless)
+    await dbWrite('scan', 'create', {
+      data: {
+        productName: product_name,
+        grade,
+        gradeReason: grade_reason,
+        summary: vitality_summary,
+        advice,
+        cleanCount: clean_count,
+        processedCount: processed_count,
+        flaggedCount: flagged_count,
+        source: image ? 'scan' : 'manual',
+        results: JSON.stringify(normalizedIngredients),
+      }
+    })
 
     return NextResponse.json({
       product_name,

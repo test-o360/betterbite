@@ -1,43 +1,61 @@
-import { PrismaClient } from '@prisma/client'
+/**
+ * Database wrapper that is safe for Vercel serverless environments.
+ *
+ * SQLite is incompatible with Vercel's ephemeral filesystem.
+ * This module uses dynamic imports so that a missing / broken Prisma
+ * client binary never crashes the app — DB writes are simply skipped.
+ */
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined
-}
 
-// Check if we're in an environment where SQLite DB is available
-const isDbAvailable = () => {
+
+/** Lazy, crash-safe Prisma client accessor */
+async function getPrismaClient(): Promise<any | null> {
   try {
-    // On Vercel/serverless, the DB file path won't exist
+    // Dynamic import — if @prisma/client is missing or its native binary
+    // can't load (e.g. on Vercel Lambda), we catch and return null.
+    const { PrismaClient } = await import('@prisma/client')
+
+    // Check if we're on Vercel with a SQLite file:// URL (won't work)
     const dbUrl = process.env.DATABASE_URL || ''
-    return dbUrl.startsWith('file:') ? process.env.VERCEL !== '1' : true
-  } catch {
-    return false
-  }
-}
-
-let _db: PrismaClient | null = null
-
-function getDb(): PrismaClient | null {
-  if (!isDbAvailable()) return null
-  if (!_db) {
-    try {
-      _db = globalForPrisma.prisma ?? new PrismaClient({ log: ['error', 'warn'] })
-      if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = _db
-    } catch {
+    if (dbUrl.startsWith('file:') && process.env.VERCEL === '1') {
       return null
     }
+
+    const globalForPrisma = globalThis as unknown as { _betterbite_prisma?: any }
+
+    if (!globalForPrisma._betterbite_prisma) {
+      globalForPrisma._betterbite_prisma = new PrismaClient({ log: ['error'] })
+    }
+
+    return globalForPrisma._betterbite_prisma
+  } catch (err) {
+    console.warn('Prisma client unavailable (likely serverless environment):', err instanceof Error ? err.message : err)
+    return null
   }
-  return _db
 }
 
-// Export a safe db wrapper that won't crash if DB is unavailable
-export const db = new Proxy({} as PrismaClient, {
-  get(_target, prop) {
-    const realDb = getDb()
-    if (!realDb) {
-      // Return no-op functions that silently fail on Vercel
-      return (..._args: unknown[]) => Promise.resolve(null)
-    }
-    return (realDb as Record<string, unknown>)[prop]
+/**
+ * A safe DB write helper that attempts a DB write and silently
+ * swallows any error (including Prisma being entirely unavailable).
+ */
+export async function dbWrite(
+  model: string,
+  operation: string,
+  data: unknown
+): Promise<unknown> {
+  try {
+    const client = await getPrismaClient()
+    if (!client) return null
+
+    const modelObj = client[model]
+    if (!modelObj) return null
+
+    const fn = modelObj[operation]
+    if (typeof fn !== 'function') return null
+
+    return await fn(data)
+  } catch (err) {
+    console.warn(`DB write (${model}.${operation}) skipped:`, err instanceof Error ? err.message : err)
+    return null
   }
-})
+}
