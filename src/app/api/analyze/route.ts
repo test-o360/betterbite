@@ -266,23 +266,26 @@ export async function POST(req: NextRequest) {
     const vitality_summary = String(analysisResult.vitality_summary || '')
     const advice = String(analysisResult.advice || '')
 
-    // Save to database (non-blocking)
-    db.scan.create({
-      data: {
-        productName: product_name,
-        grade,
-        gradeReason: grade_reason,
-        summary: vitality_summary,
-        advice,
-        cleanCount: clean_count,
-        processedCount: processed_count,
-        flaggedCount: flagged_count,
-        source: image ? 'scan' : 'manual',
-        results: JSON.stringify(normalizedIngredients),
-      }
-    }).catch(dbError => {
-      console.error('DB save failed:', dbError)
-    })
+    // Save to database (non-blocking, graceful on Vercel)
+    try {
+      await db.scan.create({
+        data: {
+          productName: product_name,
+          grade,
+          gradeReason: grade_reason,
+          summary: vitality_summary,
+          advice,
+          cleanCount: clean_count,
+          processedCount: processed_count,
+          flaggedCount: flagged_count,
+          source: image ? 'scan' : 'manual',
+          results: JSON.stringify(normalizedIngredients),
+        }
+      })
+    } catch (dbError) {
+      // DB save is optional — don't fail the request
+      console.error('DB save skipped:', dbError instanceof Error ? dbError.message : 'DB unavailable')
+    }
 
     return NextResponse.json({
       product_name,
@@ -297,8 +300,9 @@ export async function POST(req: NextRequest) {
     })
   } catch (error) {
     console.error('Route handler error:', error)
+    const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: 'An unexpected error occurred. Please try again.' },
+      { error: `An unexpected error occurred: ${message}. Please try again.` },
       { status: 500 }
     )
   }
