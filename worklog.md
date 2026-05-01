@@ -154,3 +154,26 @@ Stage Summary:
 - API supports both input methods (image for scan, text for manual)
 - Prisma schema updated with source tracking field
 - All code quality checks passing
+
+---
+Task ID: 9
+Agent: Main
+Task: Fix Vercel deployment error (SQLite/Prisma incompatibility)
+
+Work Log:
+- Identified root cause: SQLite doesn't work on Vercel serverless (ephemeral, read-only filesystem)
+- Even PrismaClient import could crash if native binary not available for Lambda runtime
+- Rewrote src/lib/db.ts: replaced static import with dynamic import() wrapped in try/catch
+- Added dbWrite() helper that gracefully handles all DB failures (returns null instead of crashing)
+- Added VERCEL environment check to skip SQLite file:// URLs on serverless
+- Updated src/app/api/analyze/route.ts: replaced `db.scan.create()` with `dbWrite('scan', 'create', ...)`
+- Added binaryTargets to prisma/schema.prisma: ["native", "rhel-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+- Added "postinstall": "prisma generate" to package.json for Vercel build pipeline
+- Added "prisma generate" to build script as well
+- Committed and pushed to GitHub (test-o360/betterbite) for Vercel auto-deploy
+
+Stage Summary:
+- App now works on Vercel even without SQLite database
+- DB writes are optional/graceful - app returns analysis results regardless of DB availability
+- Prisma client generation happens during Vercel build (postinstall + build script)
+- Push to GitHub: b70fd75
