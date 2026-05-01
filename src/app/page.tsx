@@ -84,6 +84,7 @@ export default function Home() {
   const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null)
   const [filterTab, setFilterTab] = useState<FilterTab>('all')
   const [error, setError] = useState<string | null>(null)
+  const [analyzeProgress, setAnalyzeProgress] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   /* ---- Handlers ---- */
@@ -160,6 +161,19 @@ export default function Home() {
     if (!imagePreview) return
     setAnalyzing(true)
     setError(null)
+    setAnalyzeProgress('Scanning label...')
+
+    // Simulate progress updates
+    const progressTimer = setInterval(() => {
+      setAnalyzeProgress(prev => {
+        if (prev === 'Scanning label...') return 'Reading ingredients...'
+        if (prev === 'Reading ingredients...') return 'Classifying ingredients...'
+        if (prev === 'Classifying ingredients...') return 'Generating analysis...'
+        if (prev === 'Generating analysis...') return 'Almost done...'
+        return prev
+      })
+    }, 8000)
+
     try {
       const controller = new AbortController()
       // 2 minute timeout for AI analysis
@@ -200,6 +214,8 @@ export default function Home() {
         setError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
       }
     } finally {
+      clearInterval(progressTimer)
+      setAnalyzeProgress('')
       setAnalyzing(false)
     }
   }, [imagePreview])
@@ -220,8 +236,14 @@ export default function Home() {
   }, [])
 
   const handleBack = useCallback(() => {
-    if (screen === 'detail') setScreen('results')
-    else if (screen === 'results') setScreen('scan')
+    if (screen === 'detail') {
+      setScreen('results')
+    } else if (screen === 'results') {
+      setScreen('scan')
+      // Keep the result and preview so user can go back,
+      // but clear any previous error
+      setError(null)
+    }
   }, [screen])
 
   /* ---- Filtered ingredients ---- */
@@ -267,6 +289,7 @@ export default function Home() {
               key="scan"
               imagePreview={imagePreview}
               analyzing={analyzing}
+              analyzeProgress={analyzeProgress}
               error={error}
               fileInputRef={fileInputRef}
               onFileChange={handleFileChange}
@@ -317,6 +340,7 @@ export default function Home() {
 function ScanScreen({
   imagePreview,
   analyzing,
+  analyzeProgress,
   error,
   fileInputRef,
   onFileChange,
@@ -326,6 +350,7 @@ function ScanScreen({
 }: {
   imagePreview: string | null
   analyzing: boolean
+  analyzeProgress: string
   error: string | null
   fileInputRef: React.RefObject<HTMLInputElement | null>
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void
@@ -438,7 +463,7 @@ function ScanScreen({
             {analyzing ? (
               <>
                 <Loader2 className="size-5 animate-spin" />
-                Analyzing Ingredients...
+                {analyzeProgress || 'Analyzing Ingredients...'}
               </>
             ) : (
               <>

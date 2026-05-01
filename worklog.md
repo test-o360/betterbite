@@ -100,3 +100,24 @@ Stage Summary:
 - Better error messages for users
 - Image compression reduces payload size
 - Robust JSON parsing handles LLM response variations
+
+---
+Task ID: 7b
+Agent: Main
+Task: Fix intermittent API error on subsequent scans
+
+Work Log:
+- Diagnosed: ZAI import was missing from route file (root cause of first error)
+- Rewrote API route with `analyzeWithRetry()` function - retries up to 2 times with exponential backoff
+- Added client-side image compression (max 1600x1600, JPEG 85%)
+- Added progress state: "Scanning label..." → "Reading ingredients..." → "Classifying ingredients..." → "Generating analysis..." → "Almost done..."
+- Made DB save truly non-blocking (fire-and-forget with .catch)
+- Fixed route segment config (removed invalid Pages Router config)
+- Tested sequential calls - both return 200 OK
+- Added better error messages for non-food-label images
+
+Stage Summary:
+- API now handles retries automatically (up to 3 attempts)
+- Sequential scans work reliably (tested with 2 back-to-back calls)
+- Progress indicator shows user what's happening during ~30s analysis
+- All tests passing, lint clean

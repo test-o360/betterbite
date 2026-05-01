@@ -2,12 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
 import { db } from '@/lib/db'
 
-// Allow larger body sizes for image uploads (base64 encoded images can be large)
 export const maxDuration = 120 // 2 minutes timeout for AI processing
 
-const SYSTEM_PROMPT = `You are Vitality Logic, an educational nutritional awareness tool. You help users understand food ingredients for informational purposes only. You are NOT a medical device, doctor, dietitian, or regulatory authority. All output is educational and should not be used as medical or dietary advice.
+const ANALYSIS_PROMPT = `You are Vitality Logic, an educational nutritional awareness tool. You help users understand food ingredients for informational purposes only. You are NOT a medical device, doctor, dietitian, or regulatory authority. All output is educational and should not be used as medical or dietary advice.
 
-LEGAL DISCLAIMER (embed in every response context):
+LEGAL DISCLAIMER:
 - Never make definitive medical claims.
 - Never state an ingredient "causes" a disease or condition.
 - Always use hedged, research-referencing language.
@@ -15,123 +14,43 @@ LEGAL DISCLAIMER (embed in every response context):
 - Never diagnose, treat, or prescribe anything.
 - Always remind users to consult a healthcare professional.
 
-TASK:
-When given a description of a food product ingredient label, you must:
-
-1. Extract all visible ingredients from the label.
-2. Classify each ingredient as: "clean", "processed", or "flagged".
-   (Note: Use "flagged" instead of "harmful" — it means "worth being aware of",
-   not a definitive health judgment.)
-3. Assign an overall Vitality Grade: A, B, C, D, or F.
-4. For each ingredient, provide educational context on Body, Health, and Mind
-   using appropriately hedged language.
-5. Provide a neutral, informative product summary and a general suggestion.
-
 GRADE CRITERIA:
-
 A — Nearly all recognizable, minimally processed ingredients.
-B — Mostly recognizable ingredients with a small number of common additives.
+B — Mostly recognizable with a small number of common additives.
 C — A notable mix of whole and processed ingredients.
 D — A higher proportion of processed or synthetic ingredients.
 F — Predominantly synthetic, artificial, or heavily processed ingredients.
 
-INGREDIENT CLASSIFICATION RULES:
+CLASSIFICATION RULES:
+CLEAN — Minimally processed, recognizable whole food ingredients (oats, almonds, olive oil, water, honey, turmeric, etc.)
+PROCESSED — Significantly processed or synthetic versions (maltodextrin, soy lecithin, xanthan gum, refined sugars, "natural flavors", enriched flours, ascorbic acid)
+FLAGGED — Associated with potential health considerations in research (artificial colors like Red 40/Yellow 5, artificial sweeteners like aspartame/sucralose, preservatives like BHA/BHT/TBHQ/sodium benzoate, trans fats, potassium bromate, MSG)
 
-CLEAN — Minimally processed, recognizable whole food ingredients:
-- Whole foods: oats, almonds, blueberries, chicken, olive oil, water, eggs
-- Naturally occurring sweeteners: honey, maple syrup, coconut sugar
-- Beneficial botanicals: turmeric, ginger, cinnamon
-- Naturally derived vitamins: Vitamin C from acerola cherry, natural tocopherols
-
-PROCESSED — Ingredients that have undergone significant processing or are synthetic versions:
-- Maltodextrin, soy lecithin, xanthan gum, carrageenan
-- Refined sugars: high-fructose corn syrup, dextrose, sucrose
-- "Natural flavors" (origin is often ambiguous)
-- Enriched or bleached flours
-- Ascorbic acid (synthetic Vitamin C)
-
-FLAGGED — Ingredients that research has associated with potential health considerations:
-- Artificial colors: Red 40, Yellow 5, Blue 1
-- Artificial sweeteners: aspartame, sucralose, acesulfame-K
-- Preservatives: sodium nitrate, BHA, BHT, TBHQ, sodium benzoate
-- Partially hydrogenated oils (trans fats)
-- Potassium bromate
-- MSG
-
-BODY / HEALTH / MIND EFFECT GUIDE:
-
-APPROVED LANGUAGE PATTERNS (always use these):
+HEDGED LANGUAGE (ALWAYS USE):
 - "Some research suggests this may..."
 - "Nutritional literature has associated this with..."
 - "Some individuals report..."
 - "Ongoing studies are examining possible links to..."
 - "According to some nutritional researchers..."
 - "May play a role in..."
-- "Some studies have noted a possible association with..."
 
-PROHIBITED LANGUAGE (never use these):
-- "This causes..."
-- "This will..."
-- "This is proven to..."
-- "This is dangerous / harmful / toxic"
+NEVER USE:
+- "This causes..." / "This will..." / "This is proven to..." / "This is dangerous/harmful/toxic"
 
-BODY — Educational context on physical effects: digestion, energy, inflammation, metabolism, gut health.
-HEALTH — Educational context on long-term considerations: cardiovascular, immune, antioxidant, areas of ongoing research.
-MIND — Educational context on cognitive associations: focus, mood, sleep quality, neurological considerations.
-
-ABSOLUTE RULES:
-1. Never fabricate ingredients not visible in the image.
-2. Never name, reference, or make judgments about specific brands or companies.
-3. If the image is unclear, unreadable, or not a food label, return grade "F" with product_name "Unreadable Label" and explain in vitality_summary.
-4. All ingredient effects must use approved hedged language patterns only.
-5. Always return valid, parseable JSON with no text outside the JSON block.
-6. The app is an educational tool. Never position output as medical advice.
-7. "Flagged" means "worth being aware of based on available research" — never "dangerous", "toxic", or "harmful".
-8. Always remind users to consult a healthcare professional in the advice field.
-
-You MUST respond ONLY with this exact JSON structure and nothing else. Do NOT wrap the JSON in markdown code blocks. Return raw JSON only:
-
-{
-  "product_name": "Inferred product name or 'Unknown Product'",
-  "grade": "A" | "B" | "C" | "D" | "F",
-  "grade_reason": "One sentence explaining the grade using hedged language",
-  "vitality_summary": "2-3 sentence plain-English educational summary using appropriately hedged language. Must end with: 'This analysis is for educational purposes only and does not constitute medical or dietary advice.'",
-  "clean_count": number,
-  "processed_count": number,
-  "flagged_count": number,
-  "advice": "One general educational suggestion using hedged language. Must end with: 'Consider consulting a healthcare professional for personalized dietary guidance.'",
-  "ingredients": [
-    {
-      "name": "Ingredient Name",
-      "classification": "clean" | "processed" | "flagged",
-      "body": "Hedged educational body effect in 1-2 sentences",
-      "health": "Hedged educational health context in 1-2 sentences",
-      "mind": "Hedged educational cognitive context in 1-2 sentences"
-    }
-  ]
-}`
+Respond ONLY with valid raw JSON (no markdown, no code blocks, no extra text):
+{"product_name":"string","grade":"A|B|C|D|F","grade_reason":"one sentence hedged explanation","vitality_summary":"2-3 sentence hedged summary ending with: This analysis is for educational purposes only and does not constitute medical or dietary advice.","clean_count":0,"processed_count":0,"flagged_count":0,"advice":"one hedged suggestion ending with: Consider consulting a healthcare professional for personalized dietary guidance.","ingredients":[{"name":"string","classification":"clean|processed|flagged","body":"1-2 sentence hedged body effect","health":"1-2 sentence hedged health context","mind":"1-2 sentence hedged mind context"}]}`
 
 function extractJSON(text: string): string | null {
-  // First, try to parse the entire text as JSON
-  try {
-    JSON.parse(text)
-    return text
-  } catch {
-    // Continue to other methods
-  }
+  // 1. Try direct parse
+  try { JSON.parse(text); return text } catch { /* continue */ }
 
-  // Try to extract from markdown code blocks
+  // 2. Try markdown code block extraction
   const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
   if (codeBlockMatch) {
-    try {
-      JSON.parse(codeBlockMatch[1])
-      return codeBlockMatch[1]
-    } catch {
-      // Continue
-    }
+    try { JSON.parse(codeBlockMatch[1]); return codeBlockMatch[1] } catch { /* continue */ }
   }
 
-  // Try to find the outermost JSON object
+  // 3. Find balanced braces — the outermost valid JSON object
   let depth = 0
   let start = -1
   for (let i = 0; i < text.length; i++) {
@@ -142,28 +61,110 @@ function extractJSON(text: string): string | null {
       depth--
       if (depth === 0 && start !== -1) {
         const candidate = text.substring(start, i + 1)
-        try {
-          JSON.parse(candidate)
-          return candidate
-        } catch {
-          // Continue looking
-        }
+        try { JSON.parse(candidate); return candidate } catch { /* continue */ }
       }
     }
   }
 
-  // Last resort: regex match
+  // 4. Greedy regex fallback
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (jsonMatch) {
-    try {
-      JSON.parse(jsonMatch[0])
-      return jsonMatch[0]
-    } catch {
-      // Give up
-    }
+    try { JSON.parse(jsonMatch[0]); return jsonMatch[0] } catch { /* continue */ }
   }
 
   return null
+}
+
+async function analyzeWithRetry(zai: ZAI, image: string, maxRetries = 2): Promise<Record<string, unknown>> {
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        console.log(`Retry attempt ${attempt} for analysis...`)
+      }
+
+      // Step 1: VLM - extract text from image
+      const visionResponse = await zai.chat.completions.createVision({
+        model: 'glm-4.6v',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Read this food product ingredient label. Extract the product name and list ALL ingredients exactly as written. If not a food label or unreadable, say "NOT_A_FOOD_LABEL".'
+              },
+              { type: 'image_url', image_url: { url: image } }
+            ]
+          }
+        ],
+        thinking: { type: 'disabled' }
+      })
+
+      const extractedText = visionResponse.choices?.[0]?.message?.content || ''
+
+      if (!extractedText.trim()) {
+        throw new Error('VLM returned empty response')
+      }
+
+      // Check if the image was identified as not a food label
+      if (extractedText.toLowerCase().includes('not_a_food_label')) {
+        throw new Error('NOT_A_FOOD_LABEL')
+      }
+
+      // Step 2: LLM - classify and analyze
+      const classificationResponse = await zai.chat.completions.create({
+        messages: [
+          { role: 'system', content: ANALYSIS_PROMPT },
+          {
+            role: 'user',
+            content: `Analyze these ingredients from a food label. Return ONLY raw JSON:\n\n${extractedText}`
+          }
+        ],
+        thinking: { type: 'disabled' }
+      })
+
+      const analysisText = classificationResponse.choices?.[0]?.message?.content || ''
+
+      if (!analysisText.trim()) {
+        throw new Error('LLM returned empty response')
+      }
+
+      // Extract and parse JSON
+      const jsonStr = extractJSON(analysisText)
+      if (!jsonStr) {
+        console.error('Failed to extract JSON. Raw response (first 300):', analysisText.substring(0, 300))
+        throw new Error('Could not parse analysis results')
+      }
+
+      const result = JSON.parse(jsonStr)
+
+      // Validate structure
+      if (!result.ingredients || !Array.isArray(result.ingredients) || result.ingredients.length === 0) {
+        throw new Error('Invalid analysis structure - no ingredients found')
+      }
+
+      return result
+
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+
+      // Don't retry for non-food-label errors
+      if (lastError.message === 'NOT_A_FOOD_LABEL') {
+        throw lastError
+      }
+
+      console.error(`Attempt ${attempt + 1} failed:`, lastError.message)
+
+      // Wait before retry (exponential backoff)
+      if (attempt < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+      }
+    }
+  }
+
+  throw lastError || new Error('All retry attempts failed')
 }
 
 export async function POST(req: NextRequest) {
@@ -183,121 +184,29 @@ export async function POST(req: NextRequest) {
     // Initialize the SDK
     const zai = await ZAI.create()
 
-    // Step 1: Use VLM to extract ingredients from the image
-    let visionResponse
+    // Run analysis with retry
+    let analysisResult: Record<string, unknown>
     try {
-      visionResponse = await zai.chat.completions.createVision({
-        model: 'glm-4.6v',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: 'You are an expert OCR system specialized in reading food product ingredient labels. Extract ALL visible ingredients from this food product label image. Also identify the product name if visible. List every ingredient exactly as written on the label. If the image is not a food ingredient label or is unreadable, say so. Format your response as a structured list with the product name at the top followed by each ingredient on a new line.'
-              },
-              {
-                type: 'image_url',
-                image_url: { url: image }
-              }
-            ]
-          }
-        ],
-        thinking: { type: 'disabled' }
-      })
-    } catch (vlmError) {
-      console.error('VLM API error:', vlmError)
+      analysisResult = await analyzeWithRetry(zai, image, 2)
+    } catch (analysisError) {
+      const errMsg = analysisError instanceof Error ? analysisError.message : 'Unknown error'
+
+      if (errMsg === 'NOT_A_FOOD_LABEL') {
+        return NextResponse.json(
+          { error: 'The image does not appear to be a food ingredient label. Please upload a clear photo of a food product ingredient list.' },
+          { status: 400 }
+        )
+      }
+
+      console.error('All analysis attempts failed:', errMsg)
       return NextResponse.json(
-        { error: 'Could not analyze the image. Please try again with a clearer photo.' },
+        { error: 'Analysis could not be completed. Please try again with a clearer photo of the ingredient label.' },
         { status: 500 }
       )
     }
 
-    const extractedText = visionResponse.choices?.[0]?.message?.content || ''
-
-    if (!extractedText.trim()) {
-      return NextResponse.json(
-        { error: 'Could not extract text from the image. Please try a clearer photo of the ingredient label.' },
-        { status: 400 }
-      )
-    }
-
-    // Check if the image was identified as not a food label
-    const lowerText = extractedText.toLowerCase()
-    if (lowerText.includes('not a food') || lowerText.includes('not an ingredient') || lowerText.includes('unreadable')) {
-      return NextResponse.json(
-        { error: 'The image does not appear to be a food ingredient label. Please upload a clear photo of a food product ingredient list.' },
-        { status: 400 }
-      )
-    }
-
-    // Step 2: Use LLM to classify ingredients and generate analysis
-    let classificationResponse
-    try {
-      classificationResponse = await zai.chat.completions.create({
-        messages: [
-          {
-            role: 'system',
-            content: SYSTEM_PROMPT
-          },
-          {
-            role: 'user',
-            content: `Analyze the following food product ingredient label that was extracted from an image. Classify each ingredient and provide the complete analysis as specified. Return ONLY raw JSON, no markdown code blocks:\n\n${extractedText}`
-          }
-        ],
-        thinking: { type: 'disabled' }
-      })
-    } catch (llmError) {
-      console.error('LLM API error:', llmError)
-      return NextResponse.json(
-        { error: 'Analysis service is temporarily unavailable. Please try again.' },
-        { status: 500 }
-      )
-    }
-
-    const analysisText = classificationResponse.choices?.[0]?.message?.content || ''
-
-    if (!analysisText.trim()) {
-      return NextResponse.json(
-        { error: 'Analysis produced no results. Please try again.' },
-        { status: 500 }
-      )
-    }
-
-    // Parse the JSON response from the LLM with robust extraction
-    let analysisResult
-    const jsonStr = extractJSON(analysisText)
-    if (!jsonStr) {
-      console.error('Failed to extract JSON from LLM response')
-      console.error('Raw response (first 500 chars):', analysisText.substring(0, 500))
-      return NextResponse.json(
-        { error: 'Failed to generate analysis. Please try again.' },
-        { status: 500 }
-      )
-    }
-
-    try {
-      analysisResult = JSON.parse(jsonStr)
-    } catch (parseError) {
-      console.error('Failed to parse extracted JSON:', parseError)
-      console.error('Extracted JSON (first 500 chars):', jsonStr.substring(0, 500))
-      return NextResponse.json(
-        { error: 'Failed to generate analysis. Please try again.' },
-        { status: 500 }
-      )
-    }
-
-    // Validate the response structure
-    if (!analysisResult.ingredients || !Array.isArray(analysisResult.ingredients)) {
-      console.error('Invalid response structure - missing ingredients array')
-      return NextResponse.json(
-        { error: 'Invalid analysis result. Please try again.' },
-        { status: 500 }
-      )
-    }
-
-    // Ensure each ingredient has required fields
-    analysisResult.ingredients = analysisResult.ingredients.map((ing: Record<string, unknown>) => ({
+    // Normalize and validate each ingredient
+    const ingredients = (analysisResult.ingredients as Record<string, unknown>[]).map((ing) => ({
       name: String(ing.name || 'Unknown Ingredient'),
       classification: ['clean', 'processed', 'flagged'].includes(String(ing.classification))
         ? String(ing.classification)
@@ -307,53 +216,53 @@ export async function POST(req: NextRequest) {
       mind: String(ing.mind || 'No information available.'),
     }))
 
-    // Recalculate counts from the actual ingredients
-    analysisResult.clean_count = analysisResult.ingredients.filter(
-      (i: { classification: string }) => i.classification === 'clean'
-    ).length
-    analysisResult.processed_count = analysisResult.ingredients.filter(
-      (i: { classification: string }) => i.classification === 'processed'
-    ).length
-    analysisResult.flagged_count = analysisResult.ingredients.filter(
-      (i: { classification: string }) => i.classification === 'flagged'
-    ).length
+    // Recalculate counts
+    const clean_count = ingredients.filter(i => i.classification === 'clean').length
+    const processed_count = ingredients.filter(i => i.classification === 'processed').length
+    const flagged_count = ingredients.filter(i => i.classification === 'flagged').length
 
-    // Ensure grade is valid
-    if (!['A', 'B', 'C', 'D', 'F'].includes(analysisResult.grade)) {
-      analysisResult.grade = 'C'
-    }
+    // Validate grade
+    const grade = ['A', 'B', 'C', 'D', 'F'].includes(String(analysisResult.grade))
+      ? String(analysisResult.grade)
+      : 'C'
 
-    // Ensure product_name exists
-    if (!analysisResult.product_name) {
-      analysisResult.product_name = 'Unknown Product'
-    }
+    const product_name = String(analysisResult.product_name || 'Unknown Product')
+    const grade_reason = String(analysisResult.grade_reason || '')
+    const vitality_summary = String(analysisResult.vitality_summary || '')
+    const advice = String(analysisResult.advice || '')
 
     // Save to database (non-blocking)
-    try {
-      await db.scan.create({
-        data: {
-          productName: analysisResult.product_name,
-          grade: analysisResult.grade,
-          gradeReason: analysisResult.grade_reason || '',
-          summary: analysisResult.vitality_summary || '',
-          advice: analysisResult.advice || '',
-          cleanCount: analysisResult.clean_count,
-          processedCount: analysisResult.processed_count,
-          flaggedCount: analysisResult.flagged_count,
-          results: JSON.stringify(analysisResult.ingredients),
-        }
-      })
-    } catch (dbError) {
-      console.error('Failed to save scan to database:', dbError)
-      // Don't fail the request if DB save fails
-    }
+    db.scan.create({
+      data: {
+        productName: product_name,
+        grade,
+        gradeReason: grade_reason,
+        summary: vitality_summary,
+        advice,
+        cleanCount: clean_count,
+        processedCount: processed_count,
+        flaggedCount: flagged_count,
+        results: JSON.stringify(ingredients),
+      }
+    }).catch(dbError => {
+      console.error('DB save failed:', dbError)
+    })
 
-    return NextResponse.json(analysisResult)
+    return NextResponse.json({
+      product_name,
+      grade,
+      grade_reason,
+      vitality_summary,
+      clean_count,
+      processed_count,
+      flagged_count,
+      advice,
+      ingredients,
+    })
   } catch (error) {
-    console.error('Analysis error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
+    console.error('Route handler error:', error)
     return NextResponse.json(
-      { error: `An error occurred during analysis: ${message}. Please try again.` },
+      { error: 'An unexpected error occurred. Please try again.' },
       { status: 500 }
     )
   }
