@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 
 export const maxDuration = 120 // 2 minutes timeout for AI processing
 
-const ANALYSIS_PROMPT = `You are Vitality Logic, an educational nutritional awareness tool. You help users understand food ingredients for informational purposes only. You are NOT a medical device, doctor, dietitian, or regulatory authority. All output is educational and should not be used as medical or dietary advice.
+const ANALYSIS_PROMPT = `You are BetterBite, an educational nutritional awareness tool. You help users understand food ingredients for informational purposes only. You are NOT a medical device, doctor, dietitian, or regulatory authority. All output is educational and should not be used as medical or dietary advice.
 
 LEGAL DISCLAIMER:
 - Never make definitive medical claims.
@@ -75,7 +75,11 @@ function extractJSON(text: string): string | null {
   return null
 }
 
-async function analyzeWithRetry(zai: ZAI, image: string, maxRetries = 2): Promise<Record<string, unknown>> {
+async function analyzeWithRetry(
+  zai: ZAI,
+  options: { image?: string; ingredients?: string; productName?: string },
+  maxRetries = 2
+): Promise<Record<string, unknown>> {
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -84,33 +88,43 @@ async function analyzeWithRetry(zai: ZAI, image: string, maxRetries = 2): Promis
         console.log(`Retry attempt ${attempt} for analysis...`)
       }
 
-      // Step 1: VLM - extract text from image
-      const visionResponse = await zai.chat.completions.createVision({
-        model: 'glm-4.6v',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: 'Read this food product ingredient label. Extract the product name and list ALL ingredients exactly as written. If not a food label or unreadable, say "NOT_A_FOOD_LABEL".'
-              },
-              { type: 'image_url', image_url: { url: image } }
-            ]
-          }
-        ],
-        thinking: { type: 'disabled' }
-      })
+      let ingredientText: string
 
-      const extractedText = visionResponse.choices?.[0]?.message?.content || ''
+      if (options.image) {
+        // Step 1: VLM - extract text from image
+        const visionResponse = await zai.chat.completions.createVision({
+          model: 'glm-4.6v',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Read this food product ingredient label. Extract the product name and list ALL ingredients exactly as written. If not a food label or unreadable, say "NOT_A_FOOD_LABEL".'
+                },
+                { type: 'image_url', image_url: { url: options.image } }
+              ]
+            }
+          ],
+          thinking: { type: 'disabled' }
+        })
 
-      if (!extractedText.trim()) {
-        throw new Error('VLM returned empty response')
-      }
+        ingredientText = visionResponse.choices?.[0]?.message?.content || ''
 
-      // Check if the image was identified as not a food label
-      if (extractedText.toLowerCase().includes('not_a_food_label')) {
-        throw new Error('NOT_A_FOOD_LABEL')
+        if (!ingredientText.trim()) {
+          throw new Error('VLM returned empty response')
+        }
+
+        // Check if the image was identified as not a food label
+        if (ingredientText.toLowerCase().includes('not_a_food_label')) {
+          throw new Error('NOT_A_FOOD_LABEL')
+        }
+      } else if (options.ingredients) {
+        // Manual text input mode
+        const productLabel = options.productName ? `Product: ${options.productName}\n` : ''
+        ingredientText = `${productLabel}Ingredients: ${options.ingredients}`
+      } else {
+        throw new Error('No image or ingredients provided')
       }
 
       // Step 2: LLM - classify and analyze
@@ -119,7 +133,7 @@ async function analyzeWithRetry(zai: ZAI, image: string, maxRetries = 2): Promis
           { role: 'system', content: ANALYSIS_PROMPT },
           {
             role: 'user',
-            content: `Analyze these ingredients from a food label. Return ONLY raw JSON:\n\n${extractedText}`
+            content: `Analyze these ingredients from a food label. Return ONLY raw JSON:\n\n${ingredientText}`
           }
         ],
         thinking: { type: 'disabled' }
@@ -170,14 +184,15 @@ async function analyzeWithRetry(zai: ZAI, image: string, maxRetries = 2): Promis
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { image } = body as { image: string }
+    const { image, ingredients, productName } = body as { image?: string; ingredients?: string; productName?: string }
 
-    if (!image) {
-      return NextResponse.json({ error: 'No image provided' }, { status: 400 })
+    // Validate: must have either image or ingredients text
+    if (!image && !ingredients?.trim()) {
+      return NextResponse.json({ error: 'Please provide an image or type the ingredients.' }, { status: 400 })
     }
 
-    // Validate image data format
-    if (!image.startsWith('data:image/') && !image.startsWith('http')) {
+    // Validate image data format if provided
+    if (image && !image.startsWith('data:image/') && !image.startsWith('http')) {
       return NextResponse.json({ error: 'Invalid image format. Please upload a valid image.' }, { status: 400 })
     }
 
@@ -187,7 +202,11 @@ export async function POST(req: NextRequest) {
     // Run analysis with retry
     let analysisResult: Record<string, unknown>
     try {
-      analysisResult = await analyzeWithRetry(zai, image, 2)
+      analysisResult = await analyzeWithRetry(zai, {
+        image: image || undefined,
+        ingredients: ingredients?.trim() || undefined,
+        productName: productName?.trim() || undefined,
+      }, 2)
     } catch (analysisError) {
       const errMsg = analysisError instanceof Error ? analysisError.message : 'Unknown error'
 
@@ -200,13 +219,13 @@ export async function POST(req: NextRequest) {
 
       console.error('All analysis attempts failed:', errMsg)
       return NextResponse.json(
-        { error: 'Analysis could not be completed. Please try again with a clearer photo of the ingredient label.' },
+        { error: 'Analysis could not be completed. Please try again.' },
         { status: 500 }
       )
     }
 
     // Normalize and validate each ingredient
-    const ingredients = (analysisResult.ingredients as Record<string, unknown>[]).map((ing) => ({
+    const normalizedIngredients = (analysisResult.ingredients as Record<string, unknown>[]).map((ing) => ({
       name: String(ing.name || 'Unknown Ingredient'),
       classification: ['clean', 'processed', 'flagged'].includes(String(ing.classification))
         ? String(ing.classification)
@@ -217,16 +236,16 @@ export async function POST(req: NextRequest) {
     }))
 
     // Recalculate counts
-    const clean_count = ingredients.filter(i => i.classification === 'clean').length
-    const processed_count = ingredients.filter(i => i.classification === 'processed').length
-    const flagged_count = ingredients.filter(i => i.classification === 'flagged').length
+    const clean_count = normalizedIngredients.filter(i => i.classification === 'clean').length
+    const processed_count = normalizedIngredients.filter(i => i.classification === 'processed').length
+    const flagged_count = normalizedIngredients.filter(i => i.classification === 'flagged').length
 
     // Validate grade
     const grade = ['A', 'B', 'C', 'D', 'F'].includes(String(analysisResult.grade))
       ? String(analysisResult.grade)
       : 'C'
 
-    const product_name = String(analysisResult.product_name || 'Unknown Product')
+    const product_name = String(analysisResult.product_name || productName || 'Unknown Product')
     const grade_reason = String(analysisResult.grade_reason || '')
     const vitality_summary = String(analysisResult.vitality_summary || '')
     const advice = String(analysisResult.advice || '')
@@ -242,7 +261,8 @@ export async function POST(req: NextRequest) {
         cleanCount: clean_count,
         processedCount: processed_count,
         flaggedCount: flagged_count,
-        results: JSON.stringify(ingredients),
+        source: image ? 'scan' : 'manual',
+        results: JSON.stringify(normalizedIngredients),
       }
     }).catch(dbError => {
       console.error('DB save failed:', dbError)
@@ -257,7 +277,7 @@ export async function POST(req: NextRequest) {
       processed_count,
       flagged_count,
       advice,
-      ingredients,
+      ingredients: normalizedIngredients,
     })
   } catch (error) {
     console.error('Route handler error:', error)

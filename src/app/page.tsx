@@ -22,10 +22,17 @@ import {
   Leaf,
   ShieldAlert,
   ScanLine,
+  Type,
+  Plus,
+  Pill,
+  Apple,
+  Flame,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -53,6 +60,7 @@ interface AnalysisResult {
 
 type Screen = 'scan' | 'results' | 'detail'
 type FilterTab = 'all' | 'clean' | 'processed' | 'flagged'
+type InputMode = 'scan' | 'type'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -78,7 +86,10 @@ const CLASSIFICATION_CONFIG: Record<string, { color: string; bg: string; icon: t
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>('scan')
+  const [inputMode, setInputMode] = useState<InputMode>('scan')
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [manualIngredients, setManualIngredients] = useState('')
+  const [productName, setProductName] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [selectedIngredient, setSelectedIngredient] = useState<Ingredient | null>(null)
@@ -96,7 +107,6 @@ export default function Home() {
       const img = new Image()
 
       img.onload = () => {
-        // Max dimensions for API payload
         const MAX_WIDTH = 1600
         const MAX_HEIGHT = 1600
         let { width, height } = img
@@ -109,7 +119,6 @@ export default function Home() {
 
         canvas.width = width
         canvas.height = height
-
         ctx?.drawImage(img, 0, 0, width, height)
         const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
         URL.revokeObjectURL(img.src)
@@ -131,7 +140,6 @@ export default function Home() {
       const compressed = await compressImage(file)
       setImagePreview(compressed)
     } catch {
-      // Fallback to direct data URL if compression fails
       const reader = new FileReader()
       reader.onload = (e) => {
         setImagePreview(e.target?.result as string)
@@ -158,12 +166,14 @@ export default function Home() {
   )
 
   const handleAnalyze = useCallback(async () => {
-    if (!imagePreview) return
+    // Validate based on input mode
+    if (inputMode === 'scan' && !imagePreview) return
+    if (inputMode === 'type' && !manualIngredients.trim()) return
+
     setAnalyzing(true)
     setError(null)
     setAnalyzeProgress('Scanning label...')
 
-    // Simulate progress updates
     const progressTimer = setInterval(() => {
       setAnalyzeProgress(prev => {
         if (prev === 'Scanning label...') return 'Reading ingredients...'
@@ -176,13 +186,23 @@ export default function Home() {
 
     try {
       const controller = new AbortController()
-      // 2 minute timeout for AI analysis
       const timeoutId = setTimeout(() => controller.abort(), 120000)
+
+      const requestBody: Record<string, string> = {}
+
+      if (inputMode === 'scan') {
+        requestBody.image = imagePreview!
+      } else {
+        requestBody.ingredients = manualIngredients.trim()
+        if (productName.trim()) {
+          requestBody.productName = productName.trim()
+        }
+      }
 
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imagePreview }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       })
       clearTimeout(timeoutId)
@@ -200,9 +220,8 @@ export default function Home() {
 
       const data: AnalysisResult = await res.json()
 
-      // Validate the response has expected structure
       if (!data.ingredients || !Array.isArray(data.ingredients) || data.ingredients.length === 0) {
-        throw new Error('Analysis returned no ingredients. Please try a clearer photo.')
+        throw new Error('Analysis returned no ingredients. Please try again.')
       }
 
       setResult(data)
@@ -218,7 +237,7 @@ export default function Home() {
       setAnalyzeProgress('')
       setAnalyzing(false)
     }
-  }, [imagePreview])
+  }, [imagePreview, inputMode, manualIngredients, productName])
 
   const handleIngredientClick = useCallback((ingredient: Ingredient) => {
     setSelectedIngredient(ingredient)
@@ -232,6 +251,8 @@ export default function Home() {
     setSelectedIngredient(null)
     setFilterTab('all')
     setError(null)
+    setManualIngredients('')
+    setProductName('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
@@ -240,8 +261,6 @@ export default function Home() {
       setScreen('results')
     } else if (screen === 'results') {
       setScreen('scan')
-      // Keep the result and preview so user can go back,
-      // but clear any previous error
       setError(null)
     }
   }, [screen])
@@ -253,12 +272,15 @@ export default function Home() {
     return ing.classification === filterTab
   }) ?? []
 
+  /* ---- Can analyze? ---- */
+  const canAnalyze = inputMode === 'scan' ? !!imagePreview : manualIngredients.trim().length > 0
+
   /* ---- Render ---- */
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-foreground/[0.03] backdrop-blur-xl border-b border-border/50">
+      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border/50">
         <div className="max-w-lg mx-auto flex items-center justify-between px-4 h-14">
           <div className="flex items-center gap-2">
             {screen !== 'scan' && (
@@ -266,11 +288,14 @@ export default function Home() {
                 <ChevronLeft className="size-5" />
               </Button>
             )}
-            <div className="flex items-center gap-2">
-              <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Leaf className="size-4 text-primary" />
+            <div className="flex items-center gap-2.5">
+              <div className="size-9 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-md shadow-emerald-500/20">
+                <Apple className="size-5 text-white" />
               </div>
-              <span className="font-bold text-lg tracking-tight">Vitality Logic</span>
+              <div>
+                <span className="font-bold text-lg tracking-tight leading-none">BetterBite</span>
+                <span className="block text-[10px] text-muted-foreground font-medium tracking-wide">KNOW WHAT YOU EAT</span>
+              </div>
             </div>
           </div>
           {screen !== 'scan' && (
@@ -287,11 +312,18 @@ export default function Home() {
           {screen === 'scan' && (
             <ScanScreen
               key="scan"
+              inputMode={inputMode}
               imagePreview={imagePreview}
+              manualIngredients={manualIngredients}
+              productName={productName}
               analyzing={analyzing}
               analyzeProgress={analyzeProgress}
               error={error}
+              canAnalyze={canAnalyze}
               fileInputRef={fileInputRef}
+              onInputModeChange={setInputMode}
+              onManualIngredientsChange={setManualIngredients}
+              onProductNameChange={setProductName}
               onFileChange={handleFileChange}
               onDrop={handleDrop}
               onAnalyze={handleAnalyze}
@@ -338,21 +370,35 @@ export default function Home() {
 /* ------------------------------------------------------------------ */
 
 function ScanScreen({
+  inputMode,
   imagePreview,
+  manualIngredients,
+  productName,
   analyzing,
   analyzeProgress,
   error,
+  canAnalyze,
   fileInputRef,
+  onInputModeChange,
+  onManualIngredientsChange,
+  onProductNameChange,
   onFileChange,
   onDrop,
   onAnalyze,
   onClearImage,
 }: {
+  inputMode: InputMode
   imagePreview: string | null
+  manualIngredients: string
+  productName: string
   analyzing: boolean
   analyzeProgress: string
   error: string | null
+  canAnalyze: boolean
   fileInputRef: React.RefObject<HTMLInputElement | null>
+  onInputModeChange: (mode: InputMode) => void
+  onManualIngredientsChange: (val: string) => void
+  onProductNameChange: (val: string) => void
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   onDrop: (e: React.DragEvent) => void
   onAnalyze: () => void
@@ -366,78 +412,196 @@ function ScanScreen({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
       transition={{ duration: 0.3 }}
-      className="flex flex-col gap-6"
+      className="flex flex-col gap-5"
     >
       {/* Hero Section */}
-      <div className="text-center space-y-2 pt-2">
-        <h1 className="text-2xl font-bold tracking-tight">Scan Your Food</h1>
-        <p className="text-muted-foreground text-sm">
-          Upload a photo of a food ingredient label to analyze its nutritional profile
-        </p>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-500 via-green-500 to-teal-600 p-6 text-white shadow-xl shadow-emerald-500/20">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2" />
+        <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full translate-y-1/2 -translate-x-1/2" />
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 mb-3">
+            <Flame className="size-5 text-emerald-200" />
+            <span className="text-emerald-100 text-xs font-semibold uppercase tracking-wider">Smart Food Analysis</span>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight mb-1.5">Decode Your Food</h1>
+          <p className="text-emerald-100 text-sm leading-relaxed">
+            Scan a label or type ingredients to get instant health insights and a vitality grade.
+          </p>
+        </div>
       </div>
 
-      {/* Upload Area */}
-      {!imagePreview ? (
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { onDrop(e); setDragOver(false) }}
+      {/* Input Mode Tabs */}
+      <div className="flex p-1 bg-muted/50 rounded-xl border border-border/50">
+        <button
+          onClick={() => onInputModeChange('scan')}
           className={`
-            relative rounded-2xl border-2 border-dashed transition-all duration-300
-            ${dragOver ? 'border-primary bg-primary/5 scale-[1.02]' : 'border-border hover:border-primary/50 hover:bg-primary/[0.02]'}
-            p-8 flex flex-col items-center justify-center gap-4 min-h-[320px]
+            flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium
+            transition-all duration-200
+            ${inputMode === 'scan'
+              ? 'bg-background shadow-sm text-foreground'
+              : 'text-muted-foreground hover:text-foreground/70'
+            }
           `}
         >
-          <div className="size-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-            <Camera className="size-8 text-primary" />
-          </div>
-          <div className="text-center space-y-1">
-            <p className="font-medium">Drag & drop your label image</p>
-            <p className="text-sm text-muted-foreground">or use the buttons below</p>
+          <ScanLine className="size-4" />
+          Scan Label
+        </button>
+        <button
+          onClick={() => onInputModeChange('type')}
+          className={`
+            flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium
+            transition-all duration-200
+            ${inputMode === 'type'
+              ? 'bg-background shadow-sm text-foreground'
+              : 'text-muted-foreground hover:text-foreground/70'
+            }
+          `}
+        >
+          <Type className="size-4" />
+          Type Ingredients
+        </button>
+      </div>
+
+      {/* Scan Mode */}
+      {inputMode === 'scan' && (
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2 }}
+        >
+          {!imagePreview ? (
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => { onDrop(e); setDragOver(false) }}
+              className={`
+                relative rounded-2xl border-2 border-dashed transition-all duration-300
+                ${dragOver ? 'border-primary bg-primary/5 scale-[1.02]' : 'border-border hover:border-primary/50 hover:bg-primary/[0.02]'}
+                p-6 flex flex-col items-center justify-center gap-3 min-h-[260px]
+              `}
+            >
+              <div className="size-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+                <Camera className="size-7 text-primary" />
+              </div>
+              <div className="text-center space-y-1">
+                <p className="font-medium text-sm">Drag & drop your label image</p>
+                <p className="text-xs text-muted-foreground">or use the buttons below</p>
+              </div>
+
+              <div className="flex gap-3 mt-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 rounded-lg"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="size-3.5" />
+                  Upload
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-2 rounded-lg"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Camera className="size-3.5" />
+                  Camera
+                </Button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={onFileChange}
+              />
+            </div>
+          ) : (
+            <div className="relative rounded-2xl overflow-hidden border border-border">
+              <img
+                src={imagePreview}
+                alt="Uploaded ingredient label"
+                className="w-full max-h-[320px] object-contain bg-foreground/[0.02]"
+              />
+              <Button
+                variant="secondary"
+                size="icon"
+                className="absolute top-3 right-3 size-8 rounded-full shadow-md"
+                onClick={onClearImage}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* Type Mode */}
+      {inputMode === 'type' && (
+        <motion.div
+          initial={{ opacity: 0, x: 10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.2 }}
+          className="flex flex-col gap-3"
+        >
+          {/* Product Name */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Product Name (optional)
+            </label>
+            <Input
+              placeholder="e.g. Kellogg's Corn Flakes"
+              value={productName}
+              onChange={(e) => onProductNameChange(e.target.value)}
+              className="rounded-xl h-11"
+            />
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 mt-2 w-full max-w-xs">
-            <Button
-              variant="outline"
-              className="flex-1 gap-2"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Upload className="size-4" />
-              Upload
-            </Button>
-            <Button
-              className="flex-1 gap-2"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <Camera className="size-4" />
-              Camera
-            </Button>
+          {/* Ingredients List */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Ingredients
+            </label>
+            <Textarea
+              placeholder={"Type or paste the ingredient list here...\n\ne.g. Corn, Sugar, Malt Flavoring, High Fructose Corn Syrup, Salt..." }
+              value={manualIngredients}
+              onChange={(e) => onManualIngredientsChange(e.target.value)}
+              className="rounded-xl min-h-[160px] resize-none text-sm leading-relaxed"
+            />
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">
+                Separate ingredients with commas or new lines
+              </p>
+              {manualIngredients.trim() && (
+                <span className="text-xs text-primary font-medium">
+                  {manualIngredients.split(/[,\n]+/).filter(s => s.trim()).length} ingredient{manualIngredients.split(/[,\n]+/).filter(s => s.trim()).length !== 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={onFileChange}
-          />
-        </div>
-      ) : (
-        <div className="relative rounded-2xl overflow-hidden border border-border">
-          <img
-            src={imagePreview}
-            alt="Uploaded ingredient label"
-            className="w-full max-h-[400px] object-contain bg-foreground/[0.02]"
-          />
-          <Button
-            variant="secondary"
-            size="icon"
-            className="absolute top-3 right-3 size-8 rounded-full shadow-md"
-            onClick={onClearImage}
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
+
+          {/* Quick Add Examples */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Quick examples
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                'Oats, Honey, Almonds, Raisins',
+                'Enriched Flour, Sugar, Palm Oil, BHT',
+                'Water, Sugar, Citric Acid, Red 40, Sodium Benzoate',
+              ].map((example) => (
+                <button
+                  key={example}
+                  onClick={() => onManualIngredientsChange(example)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg bg-muted/60 border border-border/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {example.length > 40 ? example.slice(0, 40) + '...' : example}
+                </button>
+              ))}
+            </div>
+          </div>
+        </motion.div>
       )}
 
       {/* Error */}
@@ -453,10 +617,10 @@ function ScanScreen({
       )}
 
       {/* Analyze Button */}
-      {imagePreview && (
+      {canAnalyze && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Button
-            className="w-full h-12 text-base gap-2 rounded-xl"
+            className="w-full h-12 text-base gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-600 hover:to-green-700 shadow-lg shadow-emerald-500/20 border-0"
             onClick={onAnalyze}
             disabled={analyzing}
           >
@@ -475,17 +639,33 @@ function ScanScreen({
         </motion.div>
       )}
 
-      {/* Info Card */}
-      <Card className="bg-primary/[0.03] border-primary/10">
-        <CardContent className="p-4 flex gap-3">
-          <Info className="size-5 text-primary shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <p className="text-sm font-medium">How it works</p>
-            <p className="text-xs text-muted-foreground">
-              Upload a clear photo of a food product&apos;s ingredient label. Our AI will identify each ingredient,
-              classify it, and provide educational context about potential body, health, and mind associations.
-            </p>
-          </div>
+      {/* How It Works - Compact */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { icon: inputMode === 'scan' ? Camera : Type, label: inputMode === 'scan' ? 'Scan' : 'Type', desc: inputMode === 'scan' ? 'Upload a label' : 'Enter ingredients' },
+          { icon: Pill, label: 'Classify', desc: 'AI categorizes each' },
+          { icon: Leaf, label: 'Grade', desc: 'Get vitality score' },
+        ].map((step, i) => {
+          const Icon = step.icon
+          return (
+            <div key={i} className="flex flex-col items-center gap-1.5 p-3 rounded-xl bg-muted/30 border border-border/30 text-center">
+              <div className="size-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Icon className="size-4 text-primary" />
+              </div>
+              <span className="text-xs font-semibold">{step.label}</span>
+              <span className="text-[10px] text-muted-foreground leading-tight">{step.desc}</span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Disclaimer */}
+      <Card className="bg-amber-50/50 border-amber-200/50">
+        <CardContent className="p-3 flex gap-2.5">
+          <Info className="size-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-700/80 leading-relaxed">
+            BetterBite is for educational purposes only. Results are not medical advice. Always consult a healthcare professional.
+          </p>
         </CardContent>
       </Card>
     </motion.div>
@@ -531,7 +711,7 @@ function ResultsScreen({
       className="flex flex-col gap-5"
     >
       {/* Product Card + Grade */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden border-0 shadow-lg">
         <CardContent className="p-5">
           <div className="flex items-start gap-4">
             {/* Grade Circle */}
@@ -592,9 +772,9 @@ function ResultsScreen({
       </Card>
 
       {/* Vitality Summary */}
-      <Card className="bg-primary/[0.03] border-primary/10">
+      <Card className="bg-gradient-to-r from-emerald-50/80 to-green-50/80 border-emerald-200/50">
         <CardContent className="p-4 flex gap-3">
-          <Lightbulb className="size-5 text-primary shrink-0 mt-0.5" />
+          <Lightbulb className="size-5 text-emerald-600 shrink-0 mt-0.5" />
           <p className="text-sm leading-relaxed">{result.vitality_summary}</p>
         </CardContent>
       </Card>
@@ -604,7 +784,6 @@ function ResultsScreen({
         {(['all', 'clean', 'processed', 'flagged'] as FilterTab[]).map((tab) => {
           const isActive = filterTab === tab
           const iconMap = { all: ScanLine, clean: CheckCircle2, processed: CircleDot, flagged: AlertTriangle }
-          const colorMap = { all: '', clean: 'emerald', processed: 'amber', flagged: 'red' } as const
           const Icon = iconMap[tab]
           return (
             <button
@@ -643,7 +822,7 @@ function ResultsScreen({
               transition={{ delay: i * 0.05, duration: 0.25 }}
             >
               <Card
-                className="cursor-pointer hover:shadow-md transition-shadow active:scale-[0.98]"
+                className="cursor-pointer hover:shadow-md transition-all active:scale-[0.98]"
                 onClick={() => onIngredientClick(ingredient)}
               >
                 <CardContent className="p-4 flex items-center gap-3">
@@ -669,9 +848,9 @@ function ResultsScreen({
       </div>
 
       {/* Advice */}
-      <Card className="bg-vitality-blue/5 border-vitality-blue/10">
+      <Card className="bg-amber-50/50 border-amber-200/50">
         <CardContent className="p-4 flex gap-3">
-          <ShieldAlert className="size-5 text-vitality-blue shrink-0 mt-0.5" />
+          <ShieldAlert className="size-5 text-amber-600 shrink-0 mt-0.5" />
           <p className="text-sm leading-relaxed">{result.advice}</p>
         </CardContent>
       </Card>
@@ -683,7 +862,7 @@ function ResultsScreen({
         onClick={onRescan}
       >
         <RotateCcw className="size-4" />
-        Scan Another Product
+        Analyze Another Product
       </Button>
     </motion.div>
   )
@@ -707,16 +886,15 @@ function DetailScreen({
   const clsConfig = CLASSIFICATION_CONFIG[ingredient.classification]
   const ClsIcon = clsConfig.icon
 
-  // Related ingredients: same classification, excluding current
   const related = ingredients
     .filter((i) => i.classification === ingredient.classification && i.name !== ingredient.name)
     .slice(0, 5)
 
   const impactSections = [
-    { key: 'body', icon: Activity, label: 'Body', color: 'text-blue-600', bg: 'bg-blue-50', borderColor: 'border-blue-200' },
-    { key: 'health', icon: Heart, label: 'Health', color: 'text-rose-600', bg: 'bg-rose-50', borderColor: 'border-rose-200' },
-    { key: 'mind', icon: Brain, label: 'Mind', color: 'text-violet-600', bg: 'bg-violet-50', borderColor: 'border-violet-200' },
-  ] as const
+    { key: 'body' as const, icon: Activity, label: 'Body', color: 'text-blue-600', bg: 'bg-blue-50', borderColor: 'border-blue-200' },
+    { key: 'health' as const, icon: Heart, label: 'Health', color: 'text-rose-600', bg: 'bg-rose-50', borderColor: 'border-rose-200' },
+    { key: 'mind' as const, icon: Brain, label: 'Mind', color: 'text-violet-600', bg: 'bg-violet-50', borderColor: 'border-violet-200' },
+  ]
 
   return (
     <motion.div
@@ -727,7 +905,7 @@ function DetailScreen({
       className="flex flex-col gap-5"
     >
       {/* Ingredient Header */}
-      <Card>
+      <Card className="overflow-hidden border-0 shadow-lg">
         <CardContent className="p-5 space-y-3">
           <div className="flex items-start gap-3">
             <div className={`size-12 rounded-xl flex items-center justify-center shrink-0 ${clsConfig.bg}`}>
@@ -755,7 +933,7 @@ function DetailScreen({
           return (
             <Card key={section.key} className={`${section.bg} ${section.borderColor} border`}>
               <CardContent className="p-4 flex gap-3">
-                <div className={`size-9 rounded-lg bg-white/80 flex items-center justify-center shrink-0`}>
+                <div className="size-9 rounded-lg bg-white/80 flex items-center justify-center shrink-0">
                   <Icon className={`size-4 ${section.color}`} />
                 </div>
                 <div className="flex-1 space-y-1">
@@ -771,9 +949,9 @@ function DetailScreen({
       </div>
 
       {/* Consumer Tip */}
-      <Card className="bg-primary/[0.03] border-primary/10">
+      <Card className="bg-gradient-to-r from-emerald-50/80 to-green-50/80 border-emerald-200/50">
         <CardContent className="p-4 flex gap-3">
-          <Lightbulb className="size-5 text-primary shrink-0 mt-0.5" />
+          <Lightbulb className="size-5 text-emerald-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="text-sm font-medium">Educational Note</p>
             <p className="text-xs text-muted-foreground leading-relaxed">

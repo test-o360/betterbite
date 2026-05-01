@@ -8,17 +8,18 @@ datasource db {
 }
 
 model Scan {
-  id          String   @id @default(cuid())
-  productName String
-  grade       String
-  gradeReason String
-  summary     String
-  advice      String
-  cleanCount  Int      @default(0)
-  processedCount Int   @default(0)
-  flaggedCount Int     @default(0)
-  imageData   String?
-  results     String   // JSON string of ingredients array
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  productName    String
+  grade          String
+  gradeReason    String
+  summary        String
+  advice         String
+  cleanCount     Int      @default(0)
+  processedCount Int      @default(0)
+  flaggedCount   Int      @default(0)
+  source         String   @default("scan") // "scan" or "manual"
+  imageData      String?
+  results        String   // JSON string of ingredients array
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }

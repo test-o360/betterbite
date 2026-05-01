@@ -1,4 +1,4 @@
-# Vitality Logic - Work Log
+# BetterBite - Work Log
 
 ---
 Task ID: 1
@@ -121,3 +121,36 @@ Stage Summary:
 - Sequential scans work reliably (tested with 2 back-to-back calls)
 - Progress indicator shows user what's happening during ~30s analysis
 - All tests passing, lint clean
+
+---
+Task ID: 8
+Agent: Main
+Task: Rebrand to BetterBite, redesign UI, add manual ingredient input
+
+Work Log:
+- Rebranded from "Vitality Logic" to "BetterBite" across all files (page.tsx, layout.tsx, api/route.ts, api/analyze/route.ts)
+- Updated header: new Apple icon with gradient background, "BetterBite" name, "KNOW WHAT YOU EAT" tagline
+- Redesigned scan screen with vibrant gradient hero card (emerald/green/teal gradient)
+- Added tab-based input mode switcher: "Scan Label" vs "Type Ingredients"
+- Built manual ingredient input mode with:
+  - Optional product name field
+  - Textarea for ingredient list (comma or newline separated)
+  - Live ingredient count display
+  - Quick example buttons for common ingredient combinations
+- Updated API route to support both image-based and text-based analysis
+- Added `source` field to Prisma schema ("scan" or "manual")
+- Ran `db:push` to sync schema
+- Reduced Prisma logging noise (changed from ['query'] to ['error', 'warn'])
+- Updated analyze button to gradient emerald/green style with shadow
+- Added compact 3-step "How it works" grid (Scan/Type → Classify → Grade)
+- Updated disclaimer card to amber theme
+- Results screen: updated summary card to gradient emerald, advice card to amber theme
+- All lint checks pass, dev server running correctly
+
+Stage Summary:
+- App fully rebranded as "BetterBite"
+- New modern UI with gradient hero, tab-based input modes
+- Manual ingredient input fully functional alongside image scanning
+- API supports both input methods (image for scan, text for manual)
+- Prisma schema updated with source tracking field
+- All code quality checks passing

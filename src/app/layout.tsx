@@ -14,10 +14,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vitality Logic — Food Ingredient Analyzer",
-  description: "An educational nutritional awareness tool that helps you understand food ingredients. Scan labels, get insights, and make informed choices.",
-  keywords: ["nutrition", "ingredients", "food labels", "health", "education", "wellness"],
-  authors: [{ name: "Vitality Logic" }],
+  title: "BetterBite — Know What You Eat",
+  description: "An educational nutritional awareness tool that helps you understand food ingredients. Scan labels or type ingredients to get instant health insights.",
+  keywords: ["nutrition", "ingredients", "food labels", "health", "education", "wellness", "betterbite"],
+  authors: [{ name: "BetterBite" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
