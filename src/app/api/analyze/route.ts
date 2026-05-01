@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import ZAI from 'z-ai-web-dev-sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import { db } from '@/lib/db'
 
 export const maxDuration = 120 // 2 minutes timeout for AI processing
@@ -75,12 +75,20 @@ function extractJSON(text: string): string | null {
   return null
 }
 
+function getGeminiClient(): GoogleGenerativeAI {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured. Please add it to your environment variables.')
+  }
+  return new GoogleGenerativeAI(apiKey)
+}
+
 async function analyzeWithRetry(
-  zai: ZAI,
   options: { image?: string; ingredients?: string },
   maxRetries = 2
 ): Promise<Record<string, unknown>> {
   let lastError: Error | null = null
+  const genAI = getGeminiClient()
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -88,83 +96,89 @@ async function analyzeWithRetry(
         console.log(`Retry attempt ${attempt} for analysis...`)
       }
 
-      let ingredientText: string
+      // Use Gemini 2.0 Flash — fast and supports vision
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+
+      let prompt: string
+      let imageParts: Array<{ inlineData: { data: string; mimeType: string } }> = []
 
       if (options.image) {
-        // Step 1: VLM - extract text from image
-        const visionResponse = await zai.chat.completions.createVision({
-          model: 'glm-4.6v',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Read this food product ingredient label. Extract the product name and list ALL ingredients exactly as written. If not a food label or unreadable, say "NOT_A_FOOD_LABEL".'
-                },
-                { type: 'image_url', image_url: { url: options.image } }
-              ]
-            }
-          ],
-          thinking: { type: 'disabled' }
-        })
-
-        ingredientText = visionResponse.choices?.[0]?.message?.content || ''
-
-        if (!ingredientText.trim()) {
-          throw new Error('VLM returned empty response')
+        // Image mode: read the label AND classify in one call (faster)
+        // Parse base64 data from data URL
+        const dataUrlMatch = options.image.match(/^data:(image\/\w+);base64,(.+)$/)
+        if (!dataUrlMatch) {
+          throw new Error('Invalid image data format')
         }
 
-        // Check if the image was identified as not a food label
-        if (ingredientText.toLowerCase().includes('not_a_food_label')) {
-          throw new Error('NOT_A_FOOD_LABEL')
-        }
+        const mimeType = dataUrlMatch[1]
+        const base64Data = dataUrlMatch[2]
+
+        imageParts = [{
+          inlineData: { data: base64Data, mimeType }
+        }]
+
+        prompt = `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL
+
+If it IS a food label, read the product name and ALL ingredients from the image, then analyze them.
+
+${ANALYSIS_PROMPT}`
       } else if (options.ingredients) {
-        // Manual text input mode
-        ingredientText = `Ingredients: ${options.ingredients}`
+        // Text mode: just classify
+        prompt = `Analyze these ingredients from a food product.
+
+${ANALYSIS_PROMPT}
+
+Ingredients: ${options.ingredients}`
       } else {
         throw new Error('No image or ingredients provided')
       }
 
-      // Step 2: LLM - classify and analyze
-      const classificationResponse = await zai.chat.completions.create({
-        messages: [
-          { role: 'system', content: ANALYSIS_PROMPT },
-          {
-            role: 'user',
-            content: `Analyze these ingredients from a food label. Return ONLY raw JSON:\n\n${ingredientText}`
-          }
-        ],
-        thinking: { type: 'disabled' }
+      const result = await model.generateContent({
+        contents: [{
+          role: 'user',
+          parts: [
+            { text: prompt },
+            ...imageParts,
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 4096,
+        }
       })
 
-      const analysisText = classificationResponse.choices?.[0]?.message?.content || ''
+      const responseText = result.response.text()
 
-      if (!analysisText.trim()) {
-        throw new Error('LLM returned empty response')
+      if (!responseText.trim()) {
+        throw new Error('Gemini returned empty response')
+      }
+
+      // Check for non-food-label response
+      if (responseText.toLowerCase().includes('not_a_food_label')) {
+        throw new Error('NOT_A_FOOD_LABEL')
       }
 
       // Extract and parse JSON
-      const jsonStr = extractJSON(analysisText)
+      const jsonStr = extractJSON(responseText)
       if (!jsonStr) {
-        console.error('Failed to extract JSON. Raw response (first 300):', analysisText.substring(0, 300))
+        console.error('Failed to extract JSON. Raw response (first 300):', responseText.substring(0, 300))
         throw new Error('Could not parse analysis results')
       }
 
-      const result = JSON.parse(jsonStr)
+      const analysisResult = JSON.parse(jsonStr)
 
       // Validate structure
-      if (!result.ingredients || !Array.isArray(result.ingredients) || result.ingredients.length === 0) {
+      if (!analysisResult.ingredients || !Array.isArray(analysisResult.ingredients) || analysisResult.ingredients.length === 0) {
         throw new Error('Invalid analysis structure - no ingredients found')
       }
 
-      return result
+      return analysisResult
 
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
 
-      // Don't retry for non-food-label errors
-      if (lastError.message === 'NOT_A_FOOD_LABEL') {
+      // Don't retry for non-food-label or config errors
+      if (lastError.message === 'NOT_A_FOOD_LABEL' || lastError.message.includes('GEMINI_API_KEY')) {
         throw lastError
       }
 
@@ -195,13 +209,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid image format. Please upload a valid image.' }, { status: 400 })
     }
 
-    // Initialize the SDK
-    const zai = await ZAI.create()
-
     // Run analysis with retry
     let analysisResult: Record<string, unknown>
     try {
-      analysisResult = await analyzeWithRetry(zai, {
+      analysisResult = await analyzeWithRetry({
         image: image || undefined,
         ingredients: ingredients?.trim() || undefined,
       }, 2)
@@ -212,6 +223,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           { error: 'The image does not appear to be a food ingredient label. Please upload a clear photo of a food product ingredient list.' },
           { status: 400 }
+        )
+      }
+
+      if (errMsg.includes('GEMINI_API_KEY')) {
+        return NextResponse.json(
+          { error: 'AI service is not configured. Please contact the administrator.' },
+          { status: 500 }
         )
       }
 
