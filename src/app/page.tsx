@@ -111,6 +111,7 @@ export default function Home() {
   const [analyzeProgress, setAnalyzeProgress] = useState('')
   const [mounted, setMounted] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
 
   // Avoid hydration mismatch for theme toggle
   useState(() => {
@@ -268,6 +269,7 @@ export default function Home() {
     setError(null)
     setManualIngredients('')
     if (fileInputRef.current) fileInputRef.current.value = ''
+    if (cameraInputRef.current) cameraInputRef.current.value = ''
   }, [])
 
   const handleBack = useCallback(() => {
@@ -352,12 +354,17 @@ export default function Home() {
               error={error}
               canAnalyze={canAnalyze}
               fileInputRef={fileInputRef}
+              cameraInputRef={cameraInputRef}
               onInputModeChange={setInputMode}
               onManualIngredientsChange={setManualIngredients}
               onFileChange={handleFileChange}
               onDrop={handleDrop}
               onAnalyze={handleAnalyze}
-              onClearImage={() => { setImagePreview(null); if (fileInputRef.current) fileInputRef.current.value = '' }}
+              onClearImage={() => {
+                setImagePreview(null)
+                if (fileInputRef.current) fileInputRef.current.value = ''
+                if (cameraInputRef.current) cameraInputRef.current.value = ''
+              }}
             />
           )}
           {screen === 'results' && result && (
@@ -408,6 +415,7 @@ function ScanScreen({
   error,
   canAnalyze,
   fileInputRef,
+  cameraInputRef,
   onInputModeChange,
   onManualIngredientsChange,
   onFileChange,
@@ -423,6 +431,7 @@ function ScanScreen({
   error: string | null
   canAnalyze: boolean
   fileInputRef: React.RefObject<HTMLInputElement | null>
+  cameraInputRef: React.RefObject<HTMLInputElement | null>
   onInputModeChange: (mode: InputMode) => void
   onManualIngredientsChange: (val: string) => void
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void
@@ -527,14 +536,23 @@ function ScanScreen({
                 <Button
                   size="sm"
                   className="gap-2 rounded-lg"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => cameraInputRef.current?.click()}
                 >
                   <Camera className="size-3.5" />
                   Camera
                 </Button>
               </div>
+              {/* Upload input — no capture, opens file picker */}
               <input
                 ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={onFileChange}
+              />
+              {/* Camera input — with capture, opens camera on mobile */}
+              <input
+                ref={cameraInputRef}
                 type="file"
                 accept="image/*"
                 capture="environment"
