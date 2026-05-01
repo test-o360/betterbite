@@ -243,8 +243,13 @@ Ingredients: ${options.ingredients}`
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
 
-      // Don't retry for non-food-label or config errors
-      if (lastError.message === 'NOT_A_FOOD_LABEL' || lastError.message.includes('GEMINI_API_KEY')) {
+      // Don't retry for non-retriable errors
+      if (
+        lastError.message === 'NOT_A_FOOD_LABEL' ||
+        lastError.message.includes('GEMINI_API_KEY') ||
+        lastError.message.includes('429') ||
+        lastError.message.includes('quota')
+      ) {
         throw lastError
       }
 
@@ -304,8 +309,17 @@ export async function POST(req: NextRequest) {
       }
 
       console.error('All analysis attempts failed:', errMsg)
+
+      // User-friendly message for quota errors
+      if (errMsg.includes('429') || errMsg.includes('quota')) {
+        return NextResponse.json(
+          { error: 'The AI service quota has been exceeded. Please wait a minute and try again, or check your Gemini API plan and billing details.' },
+          { status: 429 }
+        )
+      }
+
       return NextResponse.json(
-        { error: `Analysis could not be completed: ${errMsg}. Please try again.` },
+        { error: 'Analysis could not be completed. Please try again.' },
         { status: 500 }
       )
     }
