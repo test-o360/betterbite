@@ -40,25 +40,177 @@ Respond ONLY with valid raw JSON (no markdown, no code blocks, no extra text):
 {"product_name":"string","grade":"A|B|C|D|F","grade_reason":"one sentence hedged explanation","vitality_summary":"2-3 sentence hedged summary ending with: This analysis is for educational purposes only and does not constitute medical or dietary advice.","clean_count":0,"processed_count":0,"flagged_count":0,"advice":"one hedged suggestion ending with: Consider consulting a healthcare professional for personalized dietary guidance.","ingredients":[{"name":"string","classification":"clean|processed|flagged","body":"1-2 sentence hedged body effect","health":"1-2 sentence hedged health context","mind":"1-2 sentence hedged mind context"}]}`
 
 /* ------------------------------------------------------------------ */
-/*  NVIDIA API (OpenAI-compatible — works on all serverless runtimes)   */
+/*  AI Provider: z-ai-web-dev-sdk (primary) + NVIDIA (fallback)       */
 /* ------------------------------------------------------------------ */
 
+// z-ai config — works locally via .z-ai-config file, on Vercel via env vars
+const ZAI_BASE_URL = process.env.ZAI_BASE_URL || ''
+const ZAI_API_KEY = process.env.ZAI_API_KEY || ''
+const ZAI_TOKEN = process.env.ZAI_TOKEN || ''
+const ZAI_USER_ID = process.env.ZAI_USER_ID || ''
+
+// NVIDIA config — fallback for Vercel deployments
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+const NVIDIA_TEXT_MODEL = process.env.NVIDIA_TEXT_MODEL || 'z-ai/glm-5.1'
+const NVIDIA_VISION_MODEL = process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct'
 
-// Text-only model (fast, great at classification)
-const TEXT_MODEL = process.env.NVIDIA_TEXT_MODEL || 'z-ai/glm-5.1'
-// Vision model (can process images — required for label scanning)
-const VISION_MODEL = process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct'
-
-function getApiKey(): string {
-  const key = process.env.NVIDIA_API_KEY
-  if (!key) {
-    throw new Error('NVIDIA_API_KEY is not configured. Please add it to your environment variables.')
-  }
-  return key
+/**
+ * Detect which AI provider to use:
+ * 1. z-ai-web-dev-sdk (if config file exists OR env vars set)
+ * 2. NVIDIA API (if NVIDIA_API_KEY is set)
+ */
+async function getAIProvider(): Promise<'zai' | 'nvidia'> {
+  if (ZAI_BASE_URL && ZAI_API_KEY) return 'zai'
+  try {
+    const fs = await import('fs/promises')
+    const path = await import('path')
+    const os = await import('os')
+    const configPaths = [
+      path.join(process.cwd(), '.z-ai-config'),
+      path.join(os.homedir(), '.z-ai-config'),
+      '/etc/.z-ai-config'
+    ]
+    for (const p of configPaths) {
+      try {
+        const str = await fs.readFile(p, 'utf-8')
+        const cfg = JSON.parse(str)
+        if (cfg.baseUrl && cfg.apiKey) return 'zai'
+      } catch { /* continue */ }
+    }
+  } catch { /* fs not available */ }
+  if (NVIDIA_API_KEY) return 'nvidia'
+  throw new Error('No AI provider configured. Set ZAI_BASE_URL+ZAI_API_KEY env vars or NVIDIA_API_KEY.')
 }
 
-interface ChatMessage {
+/* ------------------------------------------------------------------ */
+/*  z-ai-web-dev-sdk API calls                                         */
+/* ------------------------------------------------------------------ */
+
+interface ZAIConfig {
+  baseUrl: string
+  apiKey: string
+  chatId?: string
+  userId?: string
+  token?: string
+}
+
+async function loadZAIConfig(): Promise<ZAIConfig> {
+  // 1. From env vars (Vercel)
+  if (ZAI_BASE_URL && ZAI_API_KEY) {
+    return {
+      baseUrl: ZAI_BASE_URL,
+      apiKey: ZAI_API_KEY,
+      userId: ZAI_USER_ID || undefined,
+      token: ZAI_TOKEN || undefined,
+    }
+  }
+  // 2. From config file (local/sandbox)
+  const fs = await import('fs/promises')
+  const path = await import('path')
+  const os = await import('os')
+  const configPaths = [
+    path.join(process.cwd(), '.z-ai-config'),
+    path.join(os.homedir(), '.z-ai-config'),
+    '/etc/.z-ai-config'
+  ]
+  for (const p of configPaths) {
+    try {
+      const str = await fs.readFile(p, 'utf-8')
+      const cfg = JSON.parse(str)
+      if (cfg.baseUrl && cfg.apiKey) return cfg
+    } catch { /* continue */ }
+  }
+  throw new Error('z-ai config not found')
+}
+
+async function callZAIText(messages: Array<{ role: string; content: string }>): Promise<string> {
+  const config = await loadZAIConfig()
+  const url = `${config.baseUrl}/chat/completions`
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${config.apiKey}`,
+    'X-Z-AI-From': 'Z',
+  }
+  if (config.chatId) headers['X-Chat-Id'] = config.chatId
+  if (config.userId) headers['X-User-Id'] = config.userId
+  if (config.token) headers['X-Token'] = config.token
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      messages,
+      temperature: 0.3,
+      max_tokens: 4096,
+      thinking: { type: 'disabled' },
+    }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    console.error(`z-ai text API error (${response.status}):`, errorBody.substring(0, 500))
+    throw new Error(`z-ai API returned ${response.status}: ${errorBody.substring(0, 300)}`)
+  }
+
+  const data = await response.json()
+  const content = data.choices?.[0]?.message?.content
+  if (!content?.trim()) throw new Error('z-ai API returned empty content')
+  return content
+}
+
+async function callZAIVision(
+  textPrompt: string,
+  imageDataUrl: string
+): Promise<string> {
+  const config = await loadZAIConfig()
+  const url = `${config.baseUrl}/chat/completions/vision`
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${config.apiKey}`,
+    'X-Z-AI-From': 'Z',
+  }
+  if (config.chatId) headers['X-Chat-Id'] = config.chatId
+  if (config.userId) headers['X-User-Id'] = config.userId
+  if (config.token) headers['X-Token'] = config.token
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model: 'default',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: textPrompt },
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 4096,
+      thinking: { type: 'disabled' },
+    }),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    console.error(`z-ai vision API error (${response.status}):`, errorBody.substring(0, 500))
+    throw new Error(`z-ai Vision API returned ${response.status}: ${errorBody.substring(0, 300)}`)
+  }
+
+  const data = await response.json()
+  const content = data.choices?.[0]?.message?.content
+  if (!content?.trim()) throw new Error('z-ai Vision API returned empty content')
+  return content
+}
+
+/* ------------------------------------------------------------------ */
+/*  NVIDIA API calls (fallback for Vercel)                             */
+/* ------------------------------------------------------------------ */
+
+interface NvidiaChatMessage {
   role: 'system' | 'user' | 'assistant'
   content: string | Array<{
     type: 'text' | 'image_url'
@@ -68,17 +220,15 @@ interface ChatMessage {
 }
 
 async function callNvidiaChat(
-  messages: ChatMessage[],
-  apiKey: string,
+  messages: NvidiaChatMessage[],
   model: string
 ): Promise<string> {
   const url = `${NVIDIA_BASE_URL}/chat/completions`
-
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${NVIDIA_API_KEY}`,
     },
     body: JSON.stringify({
       model,
@@ -95,18 +245,8 @@ async function callNvidiaChat(
   }
 
   const data = await response.json()
-
-  // Extract text from OpenAI-compatible response
-  const choices = data.choices
-  if (!choices || choices.length === 0) {
-    throw new Error('NVIDIA API returned no choices')
-  }
-
-  const content = choices[0].message?.content
-  if (!content || !content.trim()) {
-    throw new Error('NVIDIA API returned empty content')
-  }
-
+  const content = data.choices?.[0]?.message?.content
+  if (!content?.trim()) throw new Error('NVIDIA API returned empty content')
   return content
 }
 
@@ -158,48 +298,58 @@ async function analyzeWithRetry(
   maxRetries = 2
 ): Promise<Record<string, unknown>> {
   let lastError: Error | null = null
-  const apiKey = getApiKey()
-
-  // Pick the right model: vision model for images, text model for ingredients
+  const provider = await getAIProvider()
   const isImageMode = !!options.image
-  const model = isImageMode ? VISION_MODEL : TEXT_MODEL
+
+  console.log(`Using AI provider: ${provider}, mode: ${isImageMode ? 'image' : 'text'}`)
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       if (attempt > 0) {
-        console.log(`Retry attempt ${attempt} for analysis (model: ${model})...`)
+        console.log(`Retry attempt ${attempt} for analysis (provider: ${provider})...`)
       }
 
-      const messages: ChatMessage[] = []
+      let responseText: string
 
-      if (options.image) {
-        // Image mode: use vision model to read the label + classify in one call
-        const dataUrl = options.image // Already a data:image/...;base64,... URL
-
-        messages.push({
-          role: 'user',
-          content: [
+      if (provider === 'zai') {
+        // --- z-ai-web-dev-sdk path ---
+        if (isImageMode) {
+          // Vision: send image + prompt to vision endpoint
+          const visionPrompt = `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL\n\nIf it IS a food label, read the product name and ALL ingredients from the image, then analyze them.\n\n${ANALYSIS_PROMPT}`
+          responseText = await callZAIVision(visionPrompt, options.image!)
+        } else {
+          // Text: send ingredients to chat endpoint
+          const messages = [
+            { role: 'user' as const, content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}` }
+          ]
+          responseText = await callZAIText(messages)
+        }
+      } else {
+        // --- NVIDIA API path ---
+        if (isImageMode) {
+          const messages: NvidiaChatMessage[] = [
             {
-              type: 'text',
-              text: `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL\n\nIf it IS a food label, read the product name and ALL ingredients from the image, then analyze them.\n\n${ANALYSIS_PROMPT}`
-            },
-            {
-              type: 'image_url',
-              image_url: { url: dataUrl }
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL\n\nIf it IS a food label, read the product name and ALL ingredients from the image, then analyze them.\n\n${ANALYSIS_PROMPT}`
+                },
+                {
+                  type: 'image_url',
+                  image_url: { url: options.image! }
+                }
+              ]
             }
           ]
-        })
-      } else if (options.ingredients) {
-        // Text mode: use text model to classify
-        messages.push({
-          role: 'user',
-          content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}`
-        })
-      } else {
-        throw new Error('No image or ingredients provided')
+          responseText = await callNvidiaChat(messages, NVIDIA_VISION_MODEL)
+        } else {
+          const messages: NvidiaChatMessage[] = [
+            { role: 'user', content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}` }
+          ]
+          responseText = await callNvidiaChat(messages, NVIDIA_TEXT_MODEL)
+        }
       }
-
-      const responseText = await callNvidiaChat(messages, apiKey, model)
 
       if (!responseText.trim()) {
         throw new Error('AI returned empty response')
@@ -232,10 +382,9 @@ async function analyzeWithRetry(
       // Don't retry for non-retriable errors
       if (
         lastError.message === 'NOT_A_FOOD_LABEL' ||
-        lastError.message.includes('NVIDIA_API_KEY') ||
+        lastError.message.includes('No AI provider configured') ||
         lastError.message.includes('429') ||
-        lastError.message.includes('quota') ||
-        lastError.message.includes('not a multimodal')
+        lastError.message.includes('quota')
       ) {
         throw lastError
       }
@@ -288,9 +437,9 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      if (errMsg.includes('NVIDIA_API_KEY')) {
+      if (errMsg.includes('No AI provider configured')) {
         return NextResponse.json(
-          { error: 'AI service is not configured. Please add your NVIDIA API key to the environment variables.' },
+          { error: 'AI service is not configured. Please set the required API keys in your environment variables.' },
           { status: 500 }
         )
       }
