@@ -206,14 +206,37 @@ Ingredients: ${options.ingredients}`
         throw new Error('No image or ingredients provided')
       }
 
-      // Use gemini-2.0-flash for fast responses
-      const responseText = await callGemini('gemini-2.0-flash', {
-        contents: [{ role: 'user', parts }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 4096,
+      // Try multiple models — each has separate quota pools
+      const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash']
+      let responseText: string | null = null
+      let modelError: Error | null = null
+
+      for (const model of models) {
+        try {
+          console.log(`Trying model: ${model}...`)
+          responseText = await callGemini(model, {
+            contents: [{ role: 'user', parts }],
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 4096,
+            }
+          }, apiKey)
+          break // Success — stop trying models
+        } catch (modelErr) {
+          modelError = modelErr instanceof Error ? modelErr : new Error(String(modelErr))
+          console.warn(`Model ${model} failed:`, modelError.message)
+          // If it's a quota error, try next model
+          if (modelError.message.includes('429') || modelError.message.includes('quota')) {
+            continue
+          }
+          // For other errors, don't bother trying other models
+          throw modelError
         }
-      }, apiKey)
+      }
+
+      if (!responseText) {
+        throw modelError || new Error('All Gemini models returned quota errors')
+      }
 
       if (!responseText.trim()) {
         throw new Error('Gemini returned empty response')
