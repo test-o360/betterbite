@@ -206,8 +206,8 @@ Ingredients: ${options.ingredients}`
         throw new Error('No image or ingredients provided')
       }
 
-      // Try multiple models — each has separate quota pools
-      const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash']
+      // Try multiple models — each has separate quota pools on free tier
+      const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite-001', 'gemini-1.5-flash-latest']
       let responseText: string | null = null
       let modelError: Error | null = null
 
