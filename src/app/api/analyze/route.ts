@@ -45,13 +45,17 @@ Respond ONLY with valid raw JSON (no markdown, no code blocks, no extra text):
 
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 
-function getApiConfig(): { apiKey: string; model: string } {
-  const apiKey = process.env.NVIDIA_API_KEY
-  if (!apiKey) {
+// Text-only model (fast, great at classification)
+const TEXT_MODEL = process.env.NVIDIA_TEXT_MODEL || 'z-ai/glm-5.1'
+// Vision model (can process images — required for label scanning)
+const VISION_MODEL = process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct'
+
+function getApiKey(): string {
+  const key = process.env.NVIDIA_API_KEY
+  if (!key) {
     throw new Error('NVIDIA_API_KEY is not configured. Please add it to your environment variables.')
   }
-  const model = process.env.NVIDIA_MODEL || 'z-ai/glm-5.1'
-  return { apiKey, model }
+  return key
 }
 
 interface ChatMessage {
@@ -154,18 +158,22 @@ async function analyzeWithRetry(
   maxRetries = 2
 ): Promise<Record<string, unknown>> {
   let lastError: Error | null = null
-  const { apiKey, model } = getApiConfig()
+  const apiKey = getApiKey()
+
+  // Pick the right model: vision model for images, text model for ingredients
+  const isImageMode = !!options.image
+  const model = isImageMode ? VISION_MODEL : TEXT_MODEL
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       if (attempt > 0) {
-        console.log(`Retry attempt ${attempt} for analysis...`)
+        console.log(`Retry attempt ${attempt} for analysis (model: ${model})...`)
       }
 
       const messages: ChatMessage[] = []
 
       if (options.image) {
-        // Image mode: send image + prompt for vision analysis
+        // Image mode: use vision model to read the label + classify in one call
         const dataUrl = options.image // Already a data:image/...;base64,... URL
 
         messages.push({
@@ -182,7 +190,7 @@ async function analyzeWithRetry(
           ]
         })
       } else if (options.ingredients) {
-        // Text mode: just classify
+        // Text mode: use text model to classify
         messages.push({
           role: 'user',
           content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}`
@@ -226,7 +234,8 @@ async function analyzeWithRetry(
         lastError.message === 'NOT_A_FOOD_LABEL' ||
         lastError.message.includes('NVIDIA_API_KEY') ||
         lastError.message.includes('429') ||
-        lastError.message.includes('quota')
+        lastError.message.includes('quota') ||
+        lastError.message.includes('not a multimodal')
       ) {
         throw lastError
       }
@@ -297,7 +306,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { error: `Analysis failed: ${errMsg}` },
+        { error: 'Analysis could not be completed. Please try again.' },
         { status: 500 }
       )
     }
@@ -357,9 +366,8 @@ export async function POST(req: NextRequest) {
     })
   } catch (error) {
     console.error('Route handler error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: `An unexpected error occurred. Please try again.` },
+      { error: 'An unexpected error occurred. Please try again.' },
       { status: 500 }
     )
   }
