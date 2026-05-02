@@ -177,3 +177,30 @@ Stage Summary:
 - DB writes are optional/graceful - app returns analysis results regardless of DB availability
 - Prisma client generation happens during Vercel build (postinstall + build script)
 - Push to GitHub: b70fd75
+
+---
+Task ID: 10
+Agent: Main
+Task: Fix "Analysis could not be completed" error by switching to z-ai-web-dev-sdk
+
+Work Log:
+- Identified root cause: NVIDIA_API_KEY not available in all environments
+- The z-ai-web-dev-sdk is already installed and configured (via /etc/.z-ai-config)
+- Rewrote /api/analyze route to use dual AI provider approach:
+  1. Primary: z-ai-web-dev-sdk (reads config from file or ZAI_BASE_URL/ZAI_API_KEY env vars)
+  2. Fallback: NVIDIA API (when NVIDIA_API_KEY is set)
+- Auto-detects provider at runtime based on available config
+- z-ai text chat: /chat/completions endpoint
+- z-ai vision: /chat/completions/vision endpoint (supports base64 PNG/JPEG images)
+- Tested text analysis: "Oats, Honey, Almonds, Raisins" → Grade A (4 clean) ✓
+- Tested text analysis: "Water, Sugar, Citric Acid, Red 40, Sodium Benzoate" → Grade F (1 clean, 2 processed, 2 flagged) ✓
+- Tested image analysis: Generated food label → correctly identified all 7 ingredients ✓
+- Tested non-food-label detection: correctly rejects non-food images ✓
+- Both PNG and JPEG base64 images work with z-ai vision API
+- Committed and pushed to GitHub for Vercel auto-deploy
+
+Stage Summary:
+- App fully functional with z-ai-web-dev-sdk as primary AI provider
+- Text and image analysis both working correctly
+- For Vercel deployment: set ZAI_BASE_URL, ZAI_API_KEY, ZAI_TOKEN env vars OR NVIDIA_API_KEY
+- Push commit: 0d7c816
