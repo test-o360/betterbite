@@ -43,7 +43,7 @@ Respond ONLY with valid raw JSON (no markdown, no code blocks, no extra text):
 /*  Gemini REST API (direct fetch — works on all serverless runtimes)  */
 /* ------------------------------------------------------------------ */
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
+const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1/models'
 
 function getApiKey(): string {
   const key = process.env.GEMINI_API_KEY
@@ -207,7 +207,7 @@ Ingredients: ${options.ingredients}`
       }
 
       // Try multiple models — each has separate quota pools on free tier
-      const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite-001', 'gemini-1.5-flash-latest']
+      const models = ['gemini-2.0-flash', 'gemini-1.5-flash']
       let responseText: string | null = null
       let modelError: Error | null = null
 
