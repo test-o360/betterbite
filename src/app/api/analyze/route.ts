@@ -50,7 +50,7 @@ function getApiConfig(): { apiKey: string; model: string } {
   if (!apiKey) {
     throw new Error('NVIDIA_API_KEY is not configured. Please add it to your environment variables.')
   }
-  const model = process.env.NVIDIA_MODEL || 'nvidia/glm-5.1'
+  const model = process.env.NVIDIA_MODEL || 'z-ai/glm-5.1'
   return { apiKey, model }
 }
 
@@ -86,8 +86,8 @@ async function callNvidiaChat(
 
   if (!response.ok) {
     const errorBody = await response.text()
-    console.error(`NVIDIA API error (${response.status}):`, errorBody.substring(0, 500))
-    throw new Error(`NVIDIA API returned ${response.status}: ${errorBody.substring(0, 200)}`)
+    console.error(`NVIDIA API error (${response.status}) model=${model}:`, errorBody.substring(0, 500))
+    throw new Error(`NVIDIA API returned ${response.status} for model ${model}: ${errorBody.substring(0, 300)}`)
   }
 
   const data = await response.json()
