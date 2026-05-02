@@ -40,81 +40,70 @@ Respond ONLY with valid raw JSON (no markdown, no code blocks, no extra text):
 {"product_name":"string","grade":"A|B|C|D|F","grade_reason":"one sentence hedged explanation","vitality_summary":"2-3 sentence hedged summary ending with: This analysis is for educational purposes only and does not constitute medical or dietary advice.","clean_count":0,"processed_count":0,"flagged_count":0,"advice":"one hedged suggestion ending with: Consider consulting a healthcare professional for personalized dietary guidance.","ingredients":[{"name":"string","classification":"clean|processed|flagged","body":"1-2 sentence hedged body effect","health":"1-2 sentence hedged health context","mind":"1-2 sentence hedged mind context"}]}`
 
 /* ------------------------------------------------------------------ */
-/*  Gemini REST API (direct fetch — works on all serverless runtimes)  */
+/*  NVIDIA API (OpenAI-compatible — works on all serverless runtimes)   */
 /* ------------------------------------------------------------------ */
 
-const GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1/models'
+const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 
-function getApiKey(): string {
-  const key = process.env.GEMINI_API_KEY
-  if (!key) {
-    throw new Error('GEMINI_API_KEY is not configured. Please add it to your environment variables.')
+function getApiConfig(): { apiKey: string; model: string } {
+  const apiKey = process.env.NVIDIA_API_KEY
+  if (!apiKey) {
+    throw new Error('NVIDIA_API_KEY is not configured. Please add it to your environment variables.')
   }
-  return key
+  const model = process.env.NVIDIA_MODEL || 'nvidia/glm-5.1'
+  return { apiKey, model }
 }
 
-interface GeminiPart {
-  text?: string
-  inlineData?: { mimeType: string; data: string }
-}
-
-interface GeminiRequest {
-  contents: Array<{
-    role: string
-    parts: GeminiPart[]
+interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string | Array<{
+    type: 'text' | 'image_url'
+    text?: string
+    image_url?: { url: string }
   }>
-  generationConfig?: {
-    temperature?: number
-    maxOutputTokens?: number
-  }
 }
 
-async function callGemini(
-  model: string,
-  request: GeminiRequest,
-  apiKey: string
+async function callNvidiaChat(
+  messages: ChatMessage[],
+  apiKey: string,
+  model: string
 ): Promise<string> {
-  const url = `${GEMINI_BASE}/${model}:generateContent?key=${apiKey}`
+  const url = `${NVIDIA_BASE_URL}/chat/completions`
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: 0.3,
+      max_tokens: 4096,
+    }),
   })
 
   if (!response.ok) {
     const errorBody = await response.text()
-    console.error(`Gemini API error (${response.status}):`, errorBody.substring(0, 500))
-    throw new Error(`Gemini API returned ${response.status}: ${errorBody.substring(0, 200)}`)
+    console.error(`NVIDIA API error (${response.status}):`, errorBody.substring(0, 500))
+    throw new Error(`NVIDIA API returned ${response.status}: ${errorBody.substring(0, 200)}`)
   }
 
   const data = await response.json()
 
-  // Extract text from response
-  const candidates = data.candidates
-  if (!candidates || candidates.length === 0) {
-    const blockReason = data.promptFeedback?.blockReason
-    if (blockReason) {
-      throw new Error(`Gemini blocked the request: ${blockReason}`)
-    }
-    throw new Error('Gemini returned no candidates')
+  // Extract text from OpenAI-compatible response
+  const choices = data.choices
+  if (!choices || choices.length === 0) {
+    throw new Error('NVIDIA API returned no choices')
   }
 
-  const content = candidates[0].content
-  if (!content || !content.parts || content.parts.length === 0) {
-    throw new Error('Gemini returned empty content')
+  const content = choices[0].message?.content
+  if (!content || !content.trim()) {
+    throw new Error('NVIDIA API returned empty content')
   }
 
-  const textParts = content.parts
-    .filter((p: GeminiPart) => p.text)
-    .map((p: GeminiPart) => p.text)
-    .join('')
-
-  if (!textParts.trim()) {
-    throw new Error('Gemini returned empty text')
-  }
-
-  return textParts
+  return content
 }
 
 /* ------------------------------------------------------------------ */
@@ -165,7 +154,7 @@ async function analyzeWithRetry(
   maxRetries = 2
 ): Promise<Record<string, unknown>> {
   let lastError: Error | null = null
-  const apiKey = getApiKey()
+  const { apiKey, model } = getApiConfig()
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -173,50 +162,39 @@ async function analyzeWithRetry(
         console.log(`Retry attempt ${attempt} for analysis...`)
       }
 
-      let prompt: string
-      let parts: GeminiPart[] = []
+      const messages: ChatMessage[] = []
 
       if (options.image) {
-        // Image mode: read the label AND classify in one call
-        const dataUrlMatch = options.image.match(/^data:(image\/\w+);base64,(.+)$/)
-        if (!dataUrlMatch) {
-          throw new Error('Invalid image data format')
-        }
+        // Image mode: send image + prompt for vision analysis
+        const dataUrl = options.image // Already a data:image/...;base64,... URL
 
-        const mimeType = dataUrlMatch[1]
-        const base64Data = dataUrlMatch[2]
-
-        parts.push({ text: `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL
-
-If it IS a food label, read the product name and ALL ingredients from the image, then analyze them.
-
-${ANALYSIS_PROMPT}` })
-
-        parts.push({ inlineData: { mimeType, data: base64Data } })
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL\n\nIf it IS a food label, read the product name and ALL ingredients from the image, then analyze them.\n\n${ANALYSIS_PROMPT}`
+            },
+            {
+              type: 'image_url',
+              image_url: { url: dataUrl }
+            }
+          ]
+        })
       } else if (options.ingredients) {
         // Text mode: just classify
-        prompt = `Analyze these ingredients from a food product.
-
-${ANALYSIS_PROMPT}
-
-Ingredients: ${options.ingredients}`
-
-        parts.push({ text: prompt })
+        messages.push({
+          role: 'user',
+          content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}`
+        })
       } else {
         throw new Error('No image or ingredients provided')
       }
 
-      // Use Gemini 2.0 Flash — fast and capable
-      const responseText = await callGemini('gemini-2.0-flash', {
-        contents: [{ role: 'user', parts }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 4096,
-        }
-      }, apiKey)
+      const responseText = await callNvidiaChat(messages, apiKey, model)
 
       if (!responseText.trim()) {
-        throw new Error('Gemini returned empty response')
+        throw new Error('AI returned empty response')
       }
 
       // Check for non-food-label response
@@ -246,7 +224,7 @@ Ingredients: ${options.ingredients}`
       // Don't retry for non-retriable errors
       if (
         lastError.message === 'NOT_A_FOOD_LABEL' ||
-        lastError.message.includes('GEMINI_API_KEY') ||
+        lastError.message.includes('NVIDIA_API_KEY') ||
         lastError.message.includes('429') ||
         lastError.message.includes('quota')
       ) {
@@ -301,9 +279,9 @@ export async function POST(req: NextRequest) {
         )
       }
 
-      if (errMsg.includes('GEMINI_API_KEY')) {
+      if (errMsg.includes('NVIDIA_API_KEY')) {
         return NextResponse.json(
-          { error: 'AI service is not configured. Please contact the administrator.' },
+          { error: 'AI service is not configured. Please add your NVIDIA API key to the environment variables.' },
           { status: 500 }
         )
       }
@@ -313,13 +291,13 @@ export async function POST(req: NextRequest) {
       // User-friendly message for quota errors
       if (errMsg.includes('429') || errMsg.includes('quota')) {
         return NextResponse.json(
-          { error: 'The AI service quota has been exceeded. Please wait a minute and try again, or check your Gemini API plan and billing details.' },
+          { error: 'The AI service quota has been exceeded. Please wait a moment and try again.' },
           { status: 429 }
         )
       }
 
       return NextResponse.json(
-        { error: `Analysis could not be completed: ${errMsg}` },
+        { error: 'Analysis could not be completed. Please try again.' },
         { status: 500 }
       )
     }
@@ -381,7 +359,7 @@ export async function POST(req: NextRequest) {
     console.error('Route handler error:', error)
     const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: `An unexpected error occurred: ${message}. Please try again.` },
+      { error: `An unexpected error occurred. Please try again.` },
       { status: 500 }
     )
   }
