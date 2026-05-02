@@ -342,7 +342,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { error: 'Analysis could not be completed. Please try again.' },
+        { error: `Analysis could not be completed: ${errMsg}` },
         { status: 500 }
       )
     }
