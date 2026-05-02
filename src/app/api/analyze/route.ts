@@ -21,9 +21,19 @@ D — A higher proportion of processed or synthetic ingredients.
 F — Predominantly synthetic, artificial, or heavily processed ingredients.
 
 CLASSIFICATION RULES:
-CLEAN — Minimally processed, recognizable whole food ingredients (oats, almonds, olive oil, water, honey, turmeric, etc.)
-PROCESSED — Significantly processed or synthetic versions (maltodextrin, soy lecithin, xanthan gum, refined sugars, "natural flavors", enriched flours, ascorbic acid)
-FLAGGED — Associated with potential health considerations in research (artificial colors like Red 40/Yellow 5, artificial sweeteners like aspartame/sucralose, preservatives like BHA/BHT/TBHQ/sodium benzoate, trans fats, potassium bromate, MSG)
+CLEAN — Minimally processed, recognizable whole food ingredients (oats, almonds, olive oil, water, honey, turmeric, salt, wheat flour, rice flour, whole grain flours, spices like cumin/coriander/chilli/turmeric/ginger/garlic/cloves/pepper/cardamom/fenugreek/nutmeg/aniseed, dehydrated vegetables like onion/garlic, natural starches, sugar in moderate amounts)
+PROCESSED — Significantly processed or synthetic additives and ingredients (maltodextrin, soy lecithin, xanthan gum, refined sugars, "natural flavors", enriched flours, palm oil, hydrogenated oils, humectants, thickeners, acidity regulators, emulsifiers, flavour enhancers like 635/627/631, colour regulators, edible starch, wheat gluten as additive)
+FLAGGED — Associated with potential health concerns in research (artificial colors like Red 40/Yellow 5/150d/caramel color IV, artificial sweeteners like aspartame/sucralose, preservatives like BHA/BHT/TBHQ/sodium benzoate, trans fats, potassium bromate, MSG/E621, hydrolyzed proteins with potential allergen concerns)
+
+IMPORTANT: When reading ingredient labels with numbered food additive codes (e.g., "508", "412", "501(i)", "500(i)", "451(i)", "635", "150d"), classify the additive by its known function:
+- Thickeners (508, 412, etc.) → processed
+- Acidity regulators (501, 500, etc.) → processed
+- Humectants (451) → processed
+- Flavour enhancers (635, 627, 631) → processed
+- Colours (150d/caramel IV) → flagged (if potentially carcinogenic concern exists)
+- Minerals like calcium carbonate or ferric pyrophosphate → processed (synthetic fortification)
+
+Break each individual ingredient into its own entry. Do NOT group sub-ingredients under a parent ingredient — list them all separately.
 
 HEDGED LANGUAGE (ALWAYS USE):
 - "Some research suggests this may..."
