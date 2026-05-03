@@ -231,6 +231,10 @@ export default function Home() {
         } catch {
           // Use default error message
         }
+        // If image scan fails, suggest switching to text mode
+        if (inputMode === 'scan' && (res.status === 500 || res.status === 429)) {
+          errorMessage += ' Tip: Try switching to "Type Ingredients" mode — it works more reliably.'
+        }
         throw new Error(errorMessage)
       }
 
