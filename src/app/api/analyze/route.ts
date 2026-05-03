@@ -50,7 +50,7 @@ Respond ONLY with valid raw JSON (no markdown, no code blocks, no extra text):
 {"product_name":"string","grade":"A|B|C|D|F","grade_reason":"one sentence hedged explanation","vitality_summary":"2-3 sentence hedged summary ending with: This analysis is for educational purposes only and does not constitute medical or dietary advice.","clean_count":0,"processed_count":0,"flagged_count":0,"advice":"one hedged suggestion ending with: Consider consulting a healthcare professional for personalized dietary guidance.","ingredients":[{"name":"string","classification":"clean|processed|flagged","body":"1-2 sentence hedged body effect","health":"1-2 sentence hedged health context","mind":"1-2 sentence hedged mind context"}]}`
 
 /* ------------------------------------------------------------------ */
-/*  AI Provider: z-ai-web-dev-sdk (primary) + NVIDIA (fallback)       */
+/*  AI Provider Configuration                                          */
 /* ------------------------------------------------------------------ */
 
 // z-ai config — works locally via .z-ai-config file, on Vercel via env vars
@@ -63,7 +63,14 @@ const ZAI_USER_ID = process.env.ZAI_USER_ID || ''
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || ''
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 const NVIDIA_TEXT_MODEL = process.env.NVIDIA_TEXT_MODEL || 'z-ai/glm-5.1'
-const NVIDIA_VISION_MODEL = process.env.NVIDIA_VISION_MODEL || 'meta/llama-3.2-11b-vision-instruct'
+
+// Vision models to try in order (different models have different availability)
+const NVIDIA_VISION_MODELS = [
+  process.env.NVIDIA_VISION_MODEL || 'google/gemma-3-12b-it',
+  'meta/llama-3.2-11b-vision-instruct',
+  'microsoft/phi-4-multimodal-instruct',
+  'meta/llama-3.2-90b-vision-instruct',
+]
 
 /**
  * Detect which AI provider to use:
@@ -260,6 +267,85 @@ async function callNvidiaChat(
   return content
 }
 
+/**
+ * NVIDIA vision analysis with model fallback.
+ * Tries multiple vision models in order until one works.
+ */
+async function callNvidiaVision(
+  imagePrompt: string,
+  imageDataUrl: string
+): Promise<string> {
+  const messages: NvidiaChatMessage[] = [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: imagePrompt },
+        { type: 'image_url', image_url: { url: imageDataUrl } },
+      ],
+    },
+  ]
+
+  let lastError: Error | null = null
+
+  for (const model of NVIDIA_VISION_MODELS) {
+    try {
+      console.log(`Trying NVIDIA vision model: ${model}`)
+      const result = await callNvidiaChat(messages, model)
+      console.log(`NVIDIA vision model ${model} succeeded`)
+      return result
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      console.warn(`NVIDIA vision model ${model} failed:`, lastError.message.substring(0, 200))
+      // Continue to next model
+    }
+  }
+
+  throw lastError || new Error('All NVIDIA vision models failed')
+}
+
+/**
+ * NVIDIA two-step image analysis:
+ * Step 1: Vision model extracts ingredient text from the image
+ * Step 2: Text model classifies and analyzes the ingredients
+ * This is more reliable than asking vision models to do complex JSON classification.
+ */
+async function nvidiaImageAnalysis(
+  imageDataUrl: string
+): Promise<string> {
+  // Step 1: Extract ingredients text from image using vision model
+  const extractionPrompt = `You are an OCR assistant for food product labels. Look at this image carefully.
+
+If this is NOT a food ingredient label or the text is unreadable, respond with exactly: NOT_A_FOOD_LABEL
+
+If it IS a food ingredient label, extract and return:
+1. The product name (if visible)
+2. ALL ingredients listed, exactly as written on the label
+
+Return ONLY the extracted text in this format:
+PRODUCT: [product name]
+INGREDIENTS: [full ingredient list as written on the label]
+
+Be thorough — include every single ingredient, sub-ingredient, additive code, and percentage shown.`
+
+  const extractedText = await callNvidiaVision(extractionPrompt, imageDataUrl)
+
+  if (extractedText.toLowerCase().includes('not_a_food_label')) {
+    throw new Error('NOT_A_FOOD_LABEL')
+  }
+
+  console.log('Extracted text from image:', extractedText.substring(0, 300))
+
+  // Step 2: Analyze the extracted ingredients text using text model
+  const analysisMessages: NvidiaChatMessage[] = [
+    {
+      role: 'user',
+      content: `Analyze these ingredients extracted from a food product label.\n\n${ANALYSIS_PROMPT}\n\n${extractedText}`,
+    },
+  ]
+
+  return await callNvidiaChat(analysisMessages, NVIDIA_TEXT_MODEL)
+}
+
 /* ------------------------------------------------------------------ */
 /*  JSON Extraction                                                     */
 /* ------------------------------------------------------------------ */
@@ -324,11 +410,9 @@ async function analyzeWithRetry(
       if (provider === 'zai') {
         // --- z-ai-web-dev-sdk path ---
         if (isImageMode) {
-          // Vision: send image + prompt to vision endpoint
           const visionPrompt = `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL\n\nIf it IS a food label, read the product name and ALL ingredients from the image, then analyze them.\n\n${ANALYSIS_PROMPT}`
           responseText = await callZAIVision(visionPrompt, options.image!)
         } else {
-          // Text: send ingredients to chat endpoint
           const messages = [
             { role: 'user' as const, content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}` }
           ]
@@ -337,22 +421,8 @@ async function analyzeWithRetry(
       } else {
         // --- NVIDIA API path ---
         if (isImageMode) {
-          const messages: NvidiaChatMessage[] = [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL\n\nIf it IS a food label, read the product name and ALL ingredients from the image, then analyze them.\n\n${ANALYSIS_PROMPT}`
-                },
-                {
-                  type: 'image_url',
-                  image_url: { url: options.image! }
-                }
-              ]
-            }
-          ]
-          responseText = await callNvidiaChat(messages, NVIDIA_VISION_MODEL)
+          // Two-step approach: extract text with vision, then analyze with text model
+          responseText = await nvidiaImageAnalysis(options.image!)
         } else {
           const messages: NvidiaChatMessage[] = [
             { role: 'user', content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}` }
