@@ -159,7 +159,7 @@ async function callZAIText(messages: Array<{ role: string; content: string }>): 
     body: JSON.stringify({
       messages,
       temperature: 0.3,
-      max_tokens: 4096,
+      max_tokens: 8192,
       thinking: { type: 'disabled' },
     }),
   })
@@ -224,6 +224,50 @@ async function callZAIVision(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Two-step image analysis (used by both z-ai and NVIDIA)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Two-step image analysis using z-ai:
+ * Step 1: Vision model extracts ingredient text from the image
+ * Step 2: Text model classifies and analyzes the ingredients
+ * This avoids JSON truncation from long vision model responses.
+ */
+async function zaiImageAnalysis(
+  imageDataUrl: string
+): Promise<string> {
+  // Step 1: Extract ingredients text from image using vision model
+  const extractionPrompt = `You are an OCR assistant for food product labels. Look at this image carefully.
+
+If this is NOT a food ingredient label or the text is unreadable, respond with exactly: NOT_A_FOOD_LABEL
+
+If it IS a food ingredient label, extract and return:
+1. The product name (if visible)
+2. ALL ingredients listed, exactly as written on the label
+
+Return ONLY the extracted text in this format:
+PRODUCT: [product name]
+INGREDIENTS: [full ingredient list as written on the label]
+
+Be thorough — include every single ingredient, sub-ingredient, additive code, and percentage shown.`
+
+  const extractedText = await callZAIVision(extractionPrompt, imageDataUrl)
+
+  if (extractedText.toLowerCase().includes('not_a_food_label')) {
+    throw new Error('NOT_A_FOOD_LABEL')
+  }
+
+  console.log('z-ai extracted text from image:', extractedText.substring(0, 300))
+
+  // Step 2: Analyze the extracted ingredients text using text model
+  const messages = [
+    { role: 'user' as const, content: `Analyze these ingredients extracted from a food product label.\n\n${ANALYSIS_PROMPT}\n\n${extractedText}` }
+  ]
+
+  return await callZAIText(messages)
+}
+
+/* ------------------------------------------------------------------ */
 /*  NVIDIA API calls (fallback for Vercel)                             */
 /* ------------------------------------------------------------------ */
 
@@ -251,7 +295,7 @@ async function callNvidiaChat(
       model,
       messages,
       temperature: 0.3,
-      max_tokens: 4096,
+      max_tokens: 8192,
     }),
   })
 
@@ -410,8 +454,9 @@ async function analyzeWithRetry(
       if (provider === 'zai') {
         // --- z-ai-web-dev-sdk path ---
         if (isImageMode) {
-          const visionPrompt = `Look at this food product ingredient label image. If this is NOT a food label or is unreadable, respond with exactly: NOT_A_FOOD_LABEL\n\nIf it IS a food label, read the product name and ALL ingredients from the image, then analyze them.\n\n${ANALYSIS_PROMPT}`
-          responseText = await callZAIVision(visionPrompt, options.image!)
+          // Two-step approach: vision extracts text, text model classifies
+          // This avoids JSON truncation from long vision responses
+          responseText = await zaiImageAnalysis(options.image!)
         } else {
           const messages = [
             { role: 'user' as const, content: `Analyze these ingredients from a food product.\n\n${ANALYSIS_PROMPT}\n\nIngredients: ${options.ingredients}` }
