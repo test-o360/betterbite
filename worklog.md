@@ -204,3 +204,28 @@ Stage Summary:
 - Text and image analysis both working correctly
 - For Vercel deployment: set ZAI_BASE_URL, ZAI_API_KEY, ZAI_TOKEN env vars OR NVIDIA_API_KEY
 - Push commit: 0d7c816
+
+---
+Task ID: 11
+Agent: Main
+Task: Fix "Analysis failed" error on Vercel image scan mode
+
+Work Log:
+- User reported "Analysis failed. Please try again." when scanning food labels on Vercel
+- Diagnosed: NVIDIA vision model (meta/llama-3.2-11b-vision-instruct) was failing on Vercel
+- Root cause: single NVIDIA vision model is unreliable; also NVIDIA_API_KEY may have rate limits
+- Fix 1: Added NVIDIA vision model fallback chain (gemma-3-12b → llama-3.2-11b → phi-4 → llama-3.2-90b)
+- Fix 2: Implemented two-step image analysis on NVIDIA:
+  Step 1: Vision model extracts text from image (simple OCR task)
+  Step 2: Text model (GLM-5.1) classifies and analyzes the extracted ingredients
+  This is more reliable than asking vision models to produce complex JSON
+- Fix 3: Added helpful error tip: when image scan fails, suggests switching to "Type Ingredients" mode
+- Local testing: both text and image modes work perfectly
+- Vercel testing: text mode may time out if NVIDIA_API_KEY has issues; image mode needs valid key
+
+Stage Summary:
+- App works perfectly in sandbox preview (both modes)
+- Vercel deployment needs valid NVIDIA_API_KEY for both text and image modes
+- If Vercel API key expires, user should update it in Vercel dashboard
+- Alternative: use the sandbox preview which uses z-ai-web-dev-sdk (no API key needed)
+- Push commit: d514f88
